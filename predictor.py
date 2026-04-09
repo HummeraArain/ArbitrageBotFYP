@@ -36,8 +36,8 @@ class Predictor:
 
         if os.path.exists(scaler_path):
             params = np.load(scaler_path)
-            self.min_val = params[0]
-            self.max_val = params[1]
+            self.min_val = float(np.array(params[0]).reshape(-1)[0])
+            self.max_val = float(np.array(params[1]).reshape(-1)[0])
             print("[OK] Scaler Loaded.")
 
     def predict(self, data_sequence):
@@ -45,17 +45,20 @@ class Predictor:
             return 0.0
 
         data_sequence = np.array(data_sequence).flatten()
-        scaled = (data_sequence - self.min_val) / (self.max_val - self.min_val)
+        denom = float(self.max_val - self.min_val)
+        if abs(denom) <= 1e-12:
+            return 0.0
+        scaled = (data_sequence - self.min_val) / denom
         input_tensor = torch.Tensor(scaled).view(1, 10, 1).to(self.device)
         
         with torch.no_grad():
             h = torch.zeros(2, 1, 50).to(self.device)
             prediction, _ = self.model(input_tensor, h)
             
-        predicted_val = prediction.item() 
-        unscaled_pred = predicted_val * (self.max_val - self.min_val) + self.min_val
+        predicted_val = float(prediction.item())
+        unscaled_pred = predicted_val * denom + self.min_val
         
-        return unscaled_pred
+        return float(unscaled_pred)
 
 if __name__ == "__main__":
     p = Predictor()

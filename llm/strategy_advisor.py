@@ -11,10 +11,12 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class StrategyAdvisor:
-    def __init__(self, db_path="arbpro.db", api_key: str = None):
+    def __init__(self, db_path="arbitrage.db", api_key: str = None):
         """Tier 3 LLM: Weekly batch processor for portfolio and threshold optimization."""
         self.db_path = db_path
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self._profit_column = None
+        self._has_spread_column = None
         if self.api_key:
             self.client = genai.Client(api_key=self.api_key)
             self.model_id = 'gemini-2.0-flash'
@@ -22,12 +24,33 @@ class StrategyAdvisor:
             self.client = None
             logger.error("CRITICAL: StrategyAdvisor initialized without API Key!")
 
+    def _resolve_trade_columns(self, conn):
+        if self._profit_column is not None and self._has_spread_column is not None:
+            return self._profit_column, self._has_spread_column
+        cursor = conn.execute("PRAGMA table_info(trades)")
+        cols = {row[1] for row in cursor.fetchall()}
+        if "profit" in cols:
+            self._profit_column = "profit"
+        elif "profit_usdt" in cols:
+            self._profit_column = "profit_usdt"
+        else:
+            self._profit_column = ""
+        self._has_spread_column = "spread" in cols
+        return self._profit_column, self._has_spread_column
+
     def fetch_recent_trades(self, limit=50):
         """Pulls the most recent trade outcomes from the database."""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                cursor = conn.execute("SELECT profit_usdt, spread, timestamp FROM trades ORDER BY id DESC LIMIT ?", (limit,))
+                profit_col, has_spread = self._resolve_trade_columns(conn)
+                if not profit_col:
+                    return []
+                spread_select = "spread" if has_spread else "0.0"
+                cursor = conn.execute(
+                    f"SELECT {profit_col} as profit, {spread_select} as spread, timestamp FROM trades ORDER BY id DESC LIMIT ?",
+                    (limit,)
+                )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"StrategyAdvisor DB Error: {e}")

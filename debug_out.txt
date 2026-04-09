@@ -1,0 +1,21 @@
+﻿=== BYBIT KEYS LOADED ===
+API Key: 'WUzXtPy4xdGVs1JMUm'
+Sandbox mode: None
+
+=== BYBIT FULL BALANCE (all param variants) ===
+  params={'accountType': 'UNIFIED'} totalWalletBalance=0
+params={'accountType': 'UNIFIED'} => non-zero free={}, non-zero total={}, raw_coins=[]
+params={'accountType': 'SPOT'} => ERROR: bybit {"retCode":10001,"retMsg":"accountType only support UNIFIED.","result":{},"retExtInfo":{},"time":1775631945099}
+params={'accountType': 'CONTRACT'} => ERROR: bybit {"retCode":10001,"retMsg":"accountType only support UNIFIED.","result":{},"retExtInfo":{},"time":1775631945262}
+params={'accountType': 'FUND'} => ERROR: bybit {"retCode":10001,"retMsg":"accountType only support UNIFIED.","result":{},"retExtInfo":{},"time":1775631945403}
+  params={} totalWalletBalance=0
+params={} => non-zero free={}, non-zero total={}, raw_coins=[]
+
+=== COINBASE KEYS LOADED ===
+API Key: '9bdc435a-a8e8-422b-b1d0-f2d1cbb6d3f0'
+Sandbox mode: None
+
+=== COINBASE FULL BALANCE ===
+non-zero free: {}
+non-zero total: {}
+info keys: ['data', 'pagination']

@@ -54,7 +54,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   m.role === 'user' 
                     ? 'bg-gradient-to-br from-green-500 to-green-600 text-black font-bold shadow-[0_4px_15px_rgba(34,197,94,0.2)]' 
                     : 'bg-[#111116] border border-white/10 text-gray-300 shadow-xl'
-                }`}>
+                } whitespace-pre-wrap`}>
                   {m.text}
                   {m.role !== 'user' && (
                     <div className="absolute -left-1.5 top-3 w-3 h-3 bg-[#111116] border-l border-t border-white/10 rotate-[-45deg] rounded-sm"></div>

@@ -59,8 +59,13 @@ JWT_SECRET_KEY=your_custom_secret
 ```
 
 ### 3. Launch
-**Backend:** `python api.py`
+**Backend:** `python main.py`
 **Frontend:** `cd Frontend && npm install && npm run dev`
+
+Optional frontend API override:
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
 
 ---
 *Developed as a Final Year Project (FYP) for Cross-Exchange Arbitrage & AI Optimization.*

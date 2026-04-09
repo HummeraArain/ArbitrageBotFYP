@@ -1,0 +1,67 @@
+ArbPro USB Portability & Migration Guide 🚀
+==========================================
+
+To successfully move your project from your PC to a Laptop (or any other machine) using a USB drive, follow these exact steps to avoid common "Environment Errors."
+
+1. Prepare the USB (On your main PC)
+--------------------------------------
+Crucial: Do NOT copy the entire folder directly. Some folders are specific to your PC's hardware and will break on a laptop.
+
+✅ What to Copy:
+- All .py files and the core/, llm/, execution/ folders.
+- The Frontend/ folder (EXCEPT node_modules).
+- .env: Your API keys are here! (Very important).
+- arbitrage.db & operator_vault.db: Your trade history and logins.
+- requirements.txt & package.json.
+
+❌ What NOT to Copy (Exclude these from the USB):
+- node_modules/ (Inside the Frontend folder).
+- .venv/ (Your Python virtual environment).
+- __pycache__/ (Python's temporary cache).
+
+---
+
+2. Setup on the New Laptop
+--------------------------
+Once you plug the USB into your laptop and copy the folder over:
+
+Step A: Initialize Python
+Open a terminal in the root folder and run:
+------------------------------------------
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+
+Step B: Initialize Frontend
+Go into the Frontend folder and run:
+------------------------------------
+cd Frontend
+npm install
+
+Step C: Verify the .env
+-----------------------
+Ensure your GEMINI_API_KEY, BINANCE_TESTNET_API_KEY, etc., are still correct in the .env file on the new machine.
+
+---
+
+3. Run the System
+-----------------
+Now you are ready to launch using the unified entry point:
+
+# In the root folder:
+python main.py
+
+# In the Frontend folder (separate terminal):
+npm run dev
+
+TIP: Why we delete node_modules and .venv
+-----------------------------------------
+These folders contain thousands of tiny files that take hours to copy over USB. Deleting them and running "npm install" / "pip install" on the new machine takes only 2-3 minutes and ensures everything is compatible with your laptop's OS.
+
+---
+
+4. GitHub Best Practices
+------------------------
+Since you just pushed to GitHub, keep in mind:
+- operator_vault.db and .env are ignored by Git (for your safety).
+- This means if you use "git clone" on a new machine, you MUST manually copy those two files from your USB to that machine.

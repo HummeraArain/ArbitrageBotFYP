@@ -1,67 +1,114 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Activity, Database, MessageSquare, Send, Bot as BotIcon,
-  TrendingUp, Power, AlertCircle, ChevronRight, SlidersHorizontal, LogOut, BookOpen
+  TrendingUp, Power, ChevronRight, SlidersHorizontal, LogOut, BookOpen
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import TradeApprovalModal from "@/components/TradeApprovalModal";
 import { useToast } from "@/hooks/use-toast";
+import { apiUrl, wsUrl } from "@/lib/api";
+import { loadChatState, saveChatState } from "@/lib/chatStorage";
 
 // Removed unused SpreadChart and CandleChart imports to prevent build errors
+
+type ChatMessage = { role: "ai" | "user"; text: string };
+type SpreadPoint = { time: number; spread: number };
+type OhlcPoint = { time: number; open: number; high: number; low: number; close: number };
+type TradeRecord = { time: string; route: string; profit: string };
+type PendingTrade = {
+  buyExchange: string;
+  sellExchange: string;
+  buyPrice: number;
+  sellPrice: number;
+  spread: number;
+  predictedProfit: number;
+};
+type SocketPayload = {
+  type?: string;
+  text?: string;
+  trade?: TradeRecord;
+  raw_profit?: number;
+  binance?: number;
+  bybit?: number;
+  spread?: number;
+  price?: number;
+  candle?: Partial<OhlcPoint> & { time?: number };
+  binance_bal?: number;
+  bybit_bal?: number;
+  binance_bal_status?: "LIVE" | "STALE" | "OFFLINE";
+  bybit_bal_status?: "LIVE" | "STALE" | "OFFLINE";
+  latency?: number;
+  status?: string;
+  opportunity?: boolean;
+};
+
+const INDEX_CHAT_KEY = "arbpro_index_chat_v1";
+const DEFAULT_CHAT_MESSAGE: ChatMessage = {
+  role: "ai",
+  text: "Arbitrage Bot System Online. Monitoring cross-exchange liquidity.",
+};
 
 const Index = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [botRunning, setBotRunning] = useState(false);
-  const [chatOpen, setChatOpen] = useState(true);
-  const [input, setInput] = useState("");
-  const [messages, setMessages] = useState([{ role: 'ai', text: 'Arbitrage Bot System Online. Monitoring cross-exchange liquidity.' }]);
+  const [chatOpen, setChatOpen] = useState(
+    () => loadChatState(INDEX_CHAT_KEY, [DEFAULT_CHAT_MESSAGE]).chatOpen
+  );
+  const [input, setInput] = useState(
+    () => loadChatState(INDEX_CHAT_KEY, [DEFAULT_CHAT_MESSAGE]).input
+  );
+  const [messages, setMessages] = useState<ChatMessage[]>(
+    () => loadChatState(INDEX_CHAT_KEY, [DEFAULT_CHAT_MESSAGE]).messages
+  );
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const [marketData, setMarketData] = useState<any>(null);
-  const [spreadData, setSpreadData] = useState<any[]>([]);
-  const [ohlcData, setOhlcData] = useState<any[]>([]);
-  const [tradeLog, setTradeLog] = useState<any[]>([]);
+  const [marketData, setMarketData] = useState<SocketPayload | null>(null);
+  const [spreadData, setSpreadData] = useState<SpreadPoint[]>([]);
+  const [ohlcData, setOhlcData] = useState<OhlcPoint[]>([]);
+  const [tradeLog, setTradeLog] = useState<TradeRecord[]>([]);
   const [totalProfit, setTotalProfit] = useState(0.00);
 
   const [binanceBalance, setBinanceBalance] = useState(0.00);
   const [bybitBalance, setBybitBalance] = useState(0.00);
+  const [binanceBalStatus, setBinanceBalStatus] = useState<"LIVE" | "STALE" | "OFFLINE">("OFFLINE");
+  const [bybitBalStatus, setBybitBalStatus] = useState<"LIVE" | "STALE" | "OFFLINE">("OFFLINE");
 
-  const [pendingTrade, setPendingTrade] = useState<any>(null);
+  const [pendingTrade, setPendingTrade] = useState<PendingTrade | null>(null);
   const [approvalModalOpen, setApprovalModalOpen] = useState(false);
   const [threshold, setThreshold] = useState(0.08);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem('token');
     navigate('/login', { replace: true });
-  };
+  }, [navigate]);
 
   useEffect(() => {
     const fetchDatabaseHistory = async () => {
       const token = localStorage.getItem('token');
       try {
-        const res = await fetch("http://127.0.0.1:8000/api/history", {
+        const res = await fetch(apiUrl("/api/history"), {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (!res.ok) return handleLogout();
-        const data = await res.json();
-        setTradeLog(data.history);
-        setTotalProfit(data.total_profit);
+        const data: { history?: TradeRecord[]; total_profit?: number } = await res.json();
+        setTradeLog(data.history || []);
+        setTotalProfit(data.total_profit || 0);
       } catch (e) {
         handleLogout();
       }
     };
     fetchDatabaseHistory();
-  }, [navigate]);
+  }, [handleLogout]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    const socket = new WebSocket(`ws://127.0.0.1:8000/ws/market?token=${token}`);
+    const socket = new WebSocket(wsUrl("/ws/market", { token }));
 
     socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      const data = JSON.parse(event.data) as SocketPayload;
 
       if (data.type === "ai_msg") {
         setMessages(prev => [...prev, { role: 'ai', text: data.text }]);
@@ -69,13 +116,17 @@ const Index = () => {
         setPendingTrade(data.trade);
         setApprovalModalOpen(true);
       } else if (data.type === "trade") {
-        setTradeLog(prev => [data.trade, ...prev]);
+        if (data.trade) {
+          setTradeLog(prev => [data.trade as TradeRecord, ...prev]);
+        }
         if (data.raw_profit !== undefined) setTotalProfit(p => p + data.raw_profit);
-        toast({ title: "Arbitrage Executed", description: `Captured: ${data.trade.profit}`, className: "bg-green-500 text-black font-bold border-none" });
+        toast({ title: "Arbitrage Executed", description: `Captured: ${data.trade?.profit ?? "$0.00"}`, className: "bg-green-500 text-black font-bold border-none" });
       } else if (data.type === "market") {
         setMarketData(data);
         if (data.binance_bal !== undefined) setBinanceBalance(data.binance_bal);
         if (data.bybit_bal !== undefined) setBybitBalance(data.bybit_bal);
+        if (data.binance_bal_status) setBinanceBalStatus(data.binance_bal_status);
+        if (data.bybit_bal_status) setBybitBalStatus(data.bybit_bal_status);
 
         // 1. Bulletproof Spread Tracking (Keeps last 60 points)
         setSpreadData(prev => [...prev.slice(-59), {
@@ -124,7 +175,7 @@ const Index = () => {
     socket.onclose = (event) => { if (event.code === 1008) handleLogout(); };
     socket.onerror = () => { handleLogout(); };
     return () => socket.close();
-  }, [toast, navigate]);
+  }, [toast, handleLogout]);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -139,12 +190,16 @@ const Index = () => {
 
   useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), [messages]);
 
+  useEffect(() => {
+    saveChatState(INDEX_CHAT_KEY, { messages, chatOpen, input });
+  }, [messages, chatOpen, input]);
+
   const toggleBot = async () => {
     const token = localStorage.getItem('token');
     const newState = !botRunning;
     try {
       setBotRunning(newState);
-      await fetch("http://127.0.0.1:8000/toggle_bot", {
+      await fetch(apiUrl("/toggle_bot"), {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ active: newState }),
@@ -160,7 +215,7 @@ const Index = () => {
     const newVal = parseFloat(e.target.value);
     setThreshold(newVal);
     try {
-      await fetch("http://127.0.0.1:8000/api/threshold", {
+      await fetch(apiUrl("/api/threshold"), {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ threshold: newVal }),
@@ -173,7 +228,7 @@ const Index = () => {
     setApprovalModalOpen(false);
     setPendingTrade(null);
     try {
-      await fetch("http://127.0.0.1:8000/api/trade/approve", {
+      await fetch(apiUrl("/api/trade/approve"), {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ decision: approved ? "APPROVE" : "REJECT" }),
@@ -261,8 +316,8 @@ const Index = () => {
               <TrendingUp size={12} /> +${totalProfit.toFixed(2)} Profit
             </div>
           </div>
-          <VaultCard name="Binance" color="text-yellow-500" bg="bg-yellow-500/10" balance={binanceBalance} icon="binance" />
-          <VaultCard name="Bybit" color="text-orange-500" bg="bg-orange-500/10" balance={bybitBalance} icon="bybit" />
+          <VaultCard name="Binance" color="text-yellow-500" bg="bg-yellow-500/10" balance={binanceBalance} icon="binance" status={binanceBalStatus} />
+          <VaultCard name="Bybit" color="text-orange-500" bg="bg-orange-500/10" balance={bybitBalance} icon="bybit" status={bybitBalStatus} />
         </section>
 
         <section className="bg-[#0a0a0c] border border-white/5 rounded-3xl p-6 shadow-2xl flex flex-col gap-6 relative overflow-hidden">
@@ -409,7 +464,22 @@ const Index = () => {
   );
 };
 
-const VaultCard = ({ name, color, bg, balance, icon }: any) => {
+type VaultCardProps = {
+  name: string;
+  color: string;
+  bg: string;
+  balance: number;
+  icon: "binance" | "bybit";
+  status: "LIVE" | "STALE" | "OFFLINE";
+};
+
+const statusClasses: Record<VaultCardProps["status"], string> = {
+  LIVE: "text-green-400 border-green-500/30 bg-green-500/10",
+  STALE: "text-yellow-400 border-yellow-500/30 bg-yellow-500/10",
+  OFFLINE: "text-red-400 border-red-500/30 bg-red-500/10",
+};
+
+const VaultCard = ({ name, color, bg, balance, icon, status }: VaultCardProps) => {
   return (
     <div className="bg-[#111116] border border-white/5 rounded-2xl p-5 relative overflow-hidden flex flex-col justify-between group hover:border-white/10 transition-colors">
       <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.02] -mr-8 -mt-8 rounded-full blur-2xl"></div>
@@ -418,6 +488,11 @@ const VaultCard = ({ name, color, bg, balance, icon }: any) => {
         <div className={`p-2.5 ${bg} rounded-xl`}>{icon === 'binance' ? <TrendingUp size={16} className={color} /> : <Activity size={16} className={color} />}</div>
       </div>
       <div className="space-y-2 relative z-10">
+        <div className="flex justify-end">
+          <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-widest border rounded-md ${statusClasses[status]}`}>
+            {status}
+          </span>
+        </div>
         <div className="flex justify-between items-center bg-[#0a0a0c] px-3 py-2.5 rounded-xl border border-white/5">
           <span className="text-gray-500 text-[10px] uppercase font-bold">Total Assets</span>
           <span className="font-mono text-gray-200 text-sm font-black">${(balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>

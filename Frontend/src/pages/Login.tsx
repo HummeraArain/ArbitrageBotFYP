@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mail, Lock, Shield, UserPlus, AlertCircle, Command, ChevronRight, Eye, EyeOff, CheckCircle2, Circle } from 'lucide-react';
+import { apiUrl } from '@/lib/api';
 
 const Requirement = ({ fulfilled, text }: { fulfilled: boolean, text: string }) => (
     <div className={`flex items-center gap-1.5 text-[10px] uppercase tracking-wider transition-colors duration-300 ${fulfilled ? 'text-green-400 font-bold' : 'text-gray-600'}`}>
@@ -39,9 +40,6 @@ const Login = () => {
         setError('');
         setIsLoading(true);
 
-        // ALWAYS POINT TO PORT 8000 FOR THE PYTHON BACKEND
-        const API_URL = "http://127.0.0.1:8000";
-
         try {
             const isRegistering = activeTab === 'register';
 
@@ -51,7 +49,7 @@ const Login = () => {
                 if (!passwordsMatch) throw new Error("Keys do not match.");
             }
 
-            const response = await fetch(`${API_URL}/api/${isRegistering ? 'register' : 'token'}`, {
+            const response = await fetch(apiUrl(`/api/${isRegistering ? 'register' : 'token'}`), {
                 method: 'POST',
                 headers: isRegistering
                     ? { 'Content-Type': 'application/json' }
@@ -75,16 +73,17 @@ const Login = () => {
                     setActiveTab('signin');
                 } else {
                     // 1. SAVE THE TOKEN
-                    localStorage.setItem('token', data.access_token);
+                    localStorage.setItem('token', data.access_token || data.token);
                     // 2. FORCE NAVIGATION TO DASHBOARD
                     navigate('/', { replace: true });
                 }
             } else {
                 setError(data.detail || "Authentication Failed.");
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error("Auth Error:", err);
-            setError(err.message === "Failed to fetch" ? "Backend Offline. Run python main.py" : err.message);
+            const message = err instanceof Error ? err.message : "Authentication failed.";
+            setError(message === "Failed to fetch" ? "Backend Offline. Run python main.py" : message);
         } finally {
             setIsLoading(false);
         }
