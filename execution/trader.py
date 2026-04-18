@@ -30,6 +30,13 @@ class TradeExecutor:
         self.testnet = bool(testnet)
         self.max_price_deviation_pct = float((os.getenv("MAX_PRICE_DEVIATION_PCT") or "8.0").strip())
         self.bybit_testnet_price_source = (os.getenv("BYBIT_TESTNET_PRICE_SOURCE") or "mainnet").strip().lower()
+        self.bybit_hostname = (os.getenv("BYBIT_HOSTNAME") or "bybit.com").strip()
+        self.bybit_proxy = (
+            os.getenv("BYBIT_PROXY_URL")
+            or os.getenv("HTTPS_PROXY")
+            or os.getenv("HTTP_PROXY")
+            or ""
+        ).strip()
         self.request_timeout_ms = int((os.getenv("EXCHANGE_REQUEST_TIMEOUT_MS") or "12000").strip())
         self.coinbase_paper_mode = self._as_bool(os.getenv("COINBASE_PAPER_MODE"), default=False)
         self.paper_fee_rate = float((os.getenv("PAPER_FEE_RATE") or "0.001").strip())
@@ -64,6 +71,7 @@ class TradeExecutor:
         bybit_opts = {
             "apiKey": bybit_api,
             "secret": bybit_secret,
+            "hostname": self.bybit_hostname,
             "enableRateLimit": True,
             "timeout": self.request_timeout_ms,
             "options": {
@@ -73,9 +81,8 @@ class TradeExecutor:
             },
         }
 
-        bybit_proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
-        if bybit_proxy:
-            bybit_opts["proxies"] = {"http": bybit_proxy, "https": bybit_proxy}
+        if self.bybit_proxy:
+            bybit_opts["proxies"] = {"http": self.bybit_proxy, "https": self.bybit_proxy}
 
         self.bybit = ccxt.bybit(bybit_opts)
 
@@ -84,6 +91,7 @@ class TradeExecutor:
         self.bybit_price = self.bybit
         if self.testnet and self.bybit_testnet_price_source == "mainnet":
             bybit_public_opts = {
+                "hostname": self.bybit_hostname,
                 "enableRateLimit": True,
                 "timeout": self.request_timeout_ms,
                 "options": {
@@ -92,8 +100,8 @@ class TradeExecutor:
                     "recvWindow": 10000,
                 },
             }
-            if bybit_proxy:
-                bybit_public_opts["proxies"] = {"http": bybit_proxy, "https": bybit_proxy}
+            if self.bybit_proxy:
+                bybit_public_opts["proxies"] = {"http": self.bybit_proxy, "https": self.bybit_proxy}
             self.bybit_price = ccxt.bybit(bybit_public_opts)
 
         coinbase_opts = {

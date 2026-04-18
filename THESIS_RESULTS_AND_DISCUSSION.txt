@@ -1,0 +1,237 @@
+================================================================================
+CHAPTER 5
+RESULTS AND DISCUSSION
+Project: AI Multi-Exchange Arbitrage Bot (ArbPro)
+================================================================================
+
+5.1 Evaluation Context
+This chapter reports the observed behavior of the implemented system using local
+runtime data and the project database. Results are taken from the integrated pipeline
+(market scan -> gating -> execution -> persistence -> dashboard feed/ledger).
+
+Current runtime configuration during observations:
+- EXCHANGE_TESTNET=true
+- COINBASE_PAPER_MODE=true
+- AUTO_EXECUTION=true
+- REQUIRE_POSITIVE_NET=true
+- PROFIT_ONLY_EXECUTION=true
+- ENFORCE_AI_SPREAD_GATE=false (AI advisory mode)
+- TRADING_FEE_RATE=0.0002
+- TRADING_SLIPPAGE_RATE=0.00005
+
+Interpretation note:
+- Binance/Bybit routes can run in LIVE mode (as per exchange credentials/state).
+- Coinbase routes in this setup run as COINBASE_PAPER (simulated funds with live prices).
+
+--------------------------------------------------------------------------------
+5.2 Quantitative Results (Database-Backed)
+--------------------------------------------------------------------------------
+
+Table 5.1: Overall Trading KPIs
+---------------------------------------------------------------------------
+Metric                                      Value
+---------------------------------------------------------------------------
+Total trades recorded                       666
+Successful trades                           629
+Failed trades                               37
+Success rate                                94.44%
+Total profit (successful rows)              6787.63 USD
+Average profit per successful trade         10.7911 USD
+Median profit per successful trade          8.35 USD
+Min profit among successful rows            -1.70 USD
+Max profit among successful rows            258.77 USD
+Average profit across all rows              10.1916 USD
+LLM decision rows logged                    445
+Market analysis rows cached                 13
+---------------------------------------------------------------------------
+
+Discussion:
+- The high success rate indicates operational stability of execution + persistence path.
+- The presence of a negative value in successful rows indicates that “technical success”
+  of order execution does not always imply economically optimal outcome.
+- This validates the need for cost-aware and risk-aware guards rather than spread-only
+  execution.
+
+Table 5.2: Execution Modes Performance
+----------------------------------------------------------------------------
+Mode             Total   Success   Failed   Success-PnL (USD)
+----------------------------------------------------------------------------
+LIVE             568     566       2        6740.50
+COINBASE_PAPER   97      63        34       47.13
+PRECHECK         1       0         1        0.00
+----------------------------------------------------------------------------
+
+Discussion:
+- LIVE mode contributes most executions and most cumulative profit in observed data.
+- COINBASE_PAPER shows higher failure concentration due to inventory and precheck
+  constraints, which is expected in simulated-funds branch conditions.
+
+Table 5.3: Route Distribution (Top Routes)
+-----------------------------------------------------------
+Route                   Trades
+-----------------------------------------------------------
+BINANCE -> BYBIT        534
+BINANCE -> COINBASE     85
+BYBIT -> BINANCE        35
+BYBIT -> COINBASE       11
+COINBASE -> BINANCE     1
+-----------------------------------------------------------
+
+Discussion:
+- Route activity is not uniform; Binance-Bybit dominates opportunities.
+- This supports the observed market behavior where route profitability and inventory
+  availability are asymmetric across exchanges.
+
+Table 5.4: Top Failure Reasons (Observed)
+---------------------------------------------------------------------------------
+Failure Reason                                                        Count
+---------------------------------------------------------------------------------
+insufficient paper BTC for sell (coinbase paper wallet)              34
+sell leg failed on Bybit: insufficient balance                        2
+insufficient BTC on BYBIT for sell                                    1
+---------------------------------------------------------------------------------
+
+Discussion:
+- Most failures are not API crashes; they are inventory/balance-related constraints.
+- Precheck and explicit failure logging proved useful for diagnosing operational issues.
+
+--------------------------------------------------------------------------------
+5.3 Graphs and Figures (To Insert in Final Thesis)
+--------------------------------------------------------------------------------
+
+Figure 5.1: Pair Spread Monitor (Dashboard)
+- Source: Dashboard spread chart.
+- Purpose: Show spread fluctuations for route combinations and threshold line.
+- Expected observation: short-lived spread spikes, many below execution threshold.
+
+Figure 5.2: Exchange Price Stream (Dashboard)
+- Source: Binance/Bybit/Coinbase live price chart.
+- Purpose: Show synchronous but slightly diverging prices among exchanges.
+- Expected observation: micro-differences create arbitrage opportunities intermittently.
+
+Figure 5.3: Execution Ledger Snapshot
+- Source: Dashboard ledger table.
+- Purpose: Demonstrate end-to-end logging of pair, route, mode, status, settlement.
+- Expected observation: mixed success/failure rows with auditable settlement values.
+
+Figure 5.4: Execution Feed Snapshot
+- Source: Feed panel.
+- Purpose: Show explainability of decisions (BLOCKED/SUCCESS/FAILED reasons).
+- Expected observation: transparent block reasons such as net spread guard or inventory.
+
+Figure 5.5 (Recommended custom graph): Profit Distribution Histogram
+- Build from `trades.profit` values.
+- Purpose: visualize concentration of small-profit vs occasional high-profit trades.
+
+Figure 5.6 (Recommended custom graph): Mode-wise Success/Failure Bar Chart
+- Build from execution mode counts.
+- Purpose: compare reliability of LIVE vs COINBASE_PAPER paths.
+
+--------------------------------------------------------------------------------
+5.4 Comparison with Existing Solutions
+--------------------------------------------------------------------------------
+
+Since this FYP is implementation-driven, comparison is presented against common
+solution categories used in similar student/prototype systems.
+
+Table 5.5: Comparative Analysis
+----------------------------------------------------------------------------------------------------
+Criterion                          Threshold-only Bot   Basic Arbitrage Script   Proposed ArbPro
+----------------------------------------------------------------------------------------------------
+Multi-exchange routing             Partial              Partial                  Yes (3 exchanges)
+Net-cost aware execution           Usually No           Often No                 Yes
+AI-assisted decision layer         No                   No/Minimal               Yes
+Risk breaker (loss controls)       No                   Rare                     Yes
+Trade ledger with failure reason   Basic               Basic                     Detailed
+Live operator feed explainability  No                   No                       Yes
+Chat assistant with DB context     No                   No                       Yes
+Auto model retraining              No                   No                       Yes (DB-driven)
+----------------------------------------------------------------------------------------------------
+
+Comparative significance:
+- Compared to threshold-only designs, ArbPro reduces false-positive execution in
+  low-net environments through net-spread and profitability gating.
+- Compared to script-style bots, ArbPro provides stronger observability (feed + ledger),
+  better debugging support, and safer runtime behavior.
+
+--------------------------------------------------------------------------------
+5.5 Significance of Results
+--------------------------------------------------------------------------------
+
+1) Practical viability:
+- The system demonstrates full-stack viability with real-time monitoring, decisioning,
+  execution, storage, and UI in one integrated platform.
+
+2) Explainability:
+- Decision traceability is significantly improved through execution feed + database logs.
+- This directly helps FYP defense because each trade can be explained using stored
+  route/status/error/profit context.
+
+3) Safety-first automation:
+- The design intentionally blocks non-profitable or unsafe opportunities.
+- This prevents overtrading and shows that robustness was prioritized over raw trade count.
+
+4) Research value:
+- The architecture can be reused for further academic work in route optimization,
+  slippage modeling, and adaptive policy learning.
+
+--------------------------------------------------------------------------------
+5.6 Limitations
+--------------------------------------------------------------------------------
+
+1) Environment limitation:
+- Current measured results are from testnet + Coinbase paper branch configuration.
+- Full live-market behavior can differ due to order-book depth, latency, and fees.
+
+2) Cost-model approximation:
+- Fee/slippage are configurable but still simplified approximations.
+- Exact realized PnL can differ from estimated pre-trade net spread.
+
+3) Route imbalance:
+- Most opportunities concentrate on a few routes (e.g., BINANCE -> BYBIT), reducing
+  route diversity and potentially overfitting runtime behavior.
+
+4) Asset scope limitation:
+- Current implementation is BTC-centric.
+- Multi-asset expansion may reveal different spread dynamics and risk patterns.
+
+5) Exchange constraints:
+- Insufficient inventory and exchange-side restrictions can still block otherwise valid
+  opportunities.
+
+--------------------------------------------------------------------------------
+5.7 Threats to Validity
+--------------------------------------------------------------------------------
+
+Internal validity threats:
+- Runtime configuration changes (.env) affect observed outcomes.
+- Network instability may distort real-time API behavior.
+
+External validity threats:
+- Results from one machine and selected exchange setup may not generalize equally
+  to all infrastructures.
+
+Construct validity threats:
+- “Trade success” status indicates execution pipeline success, not guaranteed positive
+  economic return for every individual trade.
+
+Mitigation used:
+- Rich logging, explicit block reasons, and mode/status-aware evaluation.
+
+--------------------------------------------------------------------------------
+5.8 Chapter Summary
+--------------------------------------------------------------------------------
+
+The reported results show that ArbPro successfully implements a safe, explainable, and
+operational arbitrage workflow. The system achieved strong execution stability
+(94.44% success rate in observed records), extensive persistence/auditing, and practical
+operator visibility through dashboard charts, feed, and ledger.
+
+At the same time, findings confirm that profitability depends heavily on realistic
+cost modeling, route inventory, and runtime conditions. These observations motivate
+future improvements in slippage estimation, route balancing, and live-environment
+calibration.
+
+================================================================================
+END OF CHAPTER 5 (RESULTS AND DISCUSSION)
+================================================================================

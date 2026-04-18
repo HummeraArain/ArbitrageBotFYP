@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Mail, Lock, Shield, UserPlus, AlertCircle, Command, ChevronRight, Eye, EyeOff, CheckCircle2, Circle } from 'lucide-react';
 import { apiUrl } from '@/lib/api';
 
@@ -19,6 +19,19 @@ const Login = () => {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const navigate = useNavigate();
+    const location = useLocation();
+
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const mode = (params.get("mode") || "").toLowerCase();
+        if (mode === "register") {
+            setActiveTab("register");
+            return;
+        }
+        if (mode === "signin" || mode === "login") {
+            setActiveTab("signin");
+        }
+    }, [location.search]);
 
     // Clear errors when switching tabs
     useEffect(() => {
@@ -74,8 +87,9 @@ const Login = () => {
                 } else {
                     // 1. SAVE THE TOKEN
                     localStorage.setItem('token', data.access_token || data.token);
+                    localStorage.setItem('username', String(data.username || email).trim().toLowerCase());
                     // 2. FORCE NAVIGATION TO DASHBOARD
-                    navigate('/', { replace: true });
+                    navigate('/dashboard', { replace: true });
                 }
             } else {
                 setError(data.detail || "Authentication Failed.");
@@ -130,6 +144,14 @@ const Login = () => {
                         <UserPlus size={14} /> Register Node
                     </button>
                 </div>
+
+                <button
+                    type="button"
+                    onClick={() => navigate('/')}
+                    className="mb-6 w-full rounded-xl border border-white/10 bg-white/[0.03] py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 transition hover:border-white/20 hover:text-white"
+                >
+                    Back To Home
+                </button>
 
                 <form onSubmit={handleAuth} className="space-y-6">
                     <div className="space-y-2">

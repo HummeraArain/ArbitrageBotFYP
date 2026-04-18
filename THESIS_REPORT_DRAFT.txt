@@ -1,0 +1,495 @@
+================================================================================
+BS-CS FYP THESIS DRAFT (TEMPLATE-ALIGNED)
+Project: AI Multi-Exchange Arbitrage Bot (ArbPro)
+Prepared from local repository state on: 11 April 2026
+Format: Plain text report for thesis writing and defense preparation
+================================================================================
+
+NOTE TO STUDENT:
+- This draft follows the chapter structure visible in your provided thesis template:
+  1) Introduction
+  2) Literature Review
+  3) Research Methodology
+  4) Implementation
+  5) Results and Discussion
+  6) Conclusion and Future Work
+- Replace placeholder names, registration numbers, supervisor details, and institute text.
+- This file is generated only for reporting. No trading engine code was modified by this step.
+
+================================================================================
+FRONT MATTER (Template Mapping)
+================================================================================
+
+Title (Suggested):
+AI-Driven Multi-Exchange Cryptocurrency Arbitrage Bot with Real-Time Risk-Gated
+Execution, Trade Ledgering, and Assistant-Based Operator Interface
+
+Alternative Short Title:
+ArbPro: Real-Time Multi-Exchange Arbitrage System
+
+Author(s):
+[Your Name(s)]
+[Registration Number(s)]
+
+Supervisor:
+[Supervisor Name]
+
+Department:
+Department of Computer Science
+
+Degree:
+Bachelor of Science in Computer Science
+
+--------------------------------------------------------------------------------
+DECLARATION (Draft)
+--------------------------------------------------------------------------------
+I/We declare that this work has been carried out by us for our Final Year Project.
+All external material has been acknowledged where applicable. This report reflects
+the implementation status of our project repository and runtime outputs.
+
+--------------------------------------------------------------------------------
+SUMMARY / ABSTRACT
+--------------------------------------------------------------------------------
+This project presents an AI-assisted cryptocurrency arbitrage system that monitors
+price differences across Binance, Bybit, and Coinbase and executes route-based
+arbitrage decisions under strict safety gates. The system combines FastAPI backend
+services, CCXT exchange connectivity, WebSocket-based real-time broadcasting, a
+React dashboard, a SQLite trade ledger, and machine-learning components.
+
+The core engine continuously computes pair spreads among live exchanges, estimates
+net spread after configurable costs, and applies multiple execution gates including:
+spread threshold, net profitability, AI decision confidence, inventory precheck, and
+risk breaker status. Only opportunities that pass the complete gate sequence proceed
+to execution. Every successful or failed execution is logged in the database with route,
+mode, status, profit, and error metadata.
+
+A chat assistant is integrated for crypto-domain question answering and can also read
+local trade history from the project database. The dashboard includes vault status,
+oracle prices, spread monitoring, execution ledger, and a dedicated execution feed for
+real-time reasoning messages. The system currently supports testnet/live exchange
+switching via environment configuration and Coinbase simulated-funds mode with live
+market prices.
+
+As of the extracted local database snapshot (11 April 2026), the project has recorded
+659 trades (622 success, 37 failed), with a cumulative successful-trades profit of
+approximately 6785.71 USD in stored records. This confirms end-to-end integration
+from market scan to persisted execution history.
+
+--------------------------------------------------------------------------------
+ACKNOWLEDGEMENTS (Draft)
+--------------------------------------------------------------------------------
+We sincerely thank our project supervisor for technical guidance, our department for
+providing academic support, and our peers for testing and feedback during iterative
+development. We also acknowledge open-source tools including FastAPI, React, CCXT,
+SQLite, and model/API ecosystems used in this project.
+
+================================================================================
+TABLE OF CONTENTS (Text Draft)
+================================================================================
+1. Introduction
+2. Literature Review
+3. Research Methodology
+4. Implementation
+5. Results and Discussion
+6. Conclusion and Future Work
+References
+Appendices
+
+================================================================================
+CHAPTER 1: INTRODUCTION
+================================================================================
+
+1.1 Background
+Cryptocurrency markets are fragmented across exchanges, creating temporary price
+differences for the same asset pair. Arbitrage systems attempt to exploit these
+differences by buying on one exchange and selling on another. However, naive
+arbitrage logic often fails due to fees, slippage, route inventory constraints, and
+execution latency.
+
+1.2 Problem Statement
+Manual arbitrage is too slow for fast-moving crypto spreads, while automated systems
+without robust guards can execute losing trades. A practical FYP challenge is to build
+an end-to-end bot that:
+- detects opportunities in real time,
+- avoids unsafe trades,
+- logs outcomes reliably,
+- and exposes clear operator visibility in UI.
+
+1.3 Project Objectives
+Primary objectives achieved in this project:
+- Build real-time multi-exchange price monitor (Binance, Bybit, Coinbase).
+- Implement route-based arbitrage engine with threshold and net-profit gates.
+- Add AI-assisted decision and risk-aware position sizing.
+- Store trade history and decision artifacts in SQLite.
+- Provide dashboard with live prices, spreads, vault status, ledger, and execution feed.
+- Integrate chat assistant for crypto Q/A and local trade-history responses.
+
+1.4 Scope
+In-scope:
+- BTC-focused spread monitoring and route evaluation.
+- Testnet/live configuration switching through environment flags.
+- Coinbase paper mode (simulated funds) with live market prices.
+- Authentication-protected API and dashboard flow.
+
+Out-of-scope:
+- Guaranteed profitability in all market conditions.
+- Full market-making and portfolio rebalancing strategies.
+- Institutional-grade order routing and sub-millisecond co-location latency.
+
+1.5 Key Contributions
+- Unified backend loop combining market scan, AI gate, risk gate, and execution.
+- Detailed trade schema supporting success/failure and audit fields.
+- Persistent chart/feed/chat context behavior in dashboard UX.
+- Operator-centric explainability via execution feed messages.
+
+1.6 Report Organization
+Chapter 2 reviews related approaches and gaps. Chapter 3 explains architecture and
+methodology. Chapter 4 details implementation modules and APIs. Chapter 5 provides
+observed results and discussion. Chapter 6 concludes and proposes future extensions.
+
+================================================================================
+CHAPTER 2: LITERATURE REVIEW
+================================================================================
+
+2.1 Exchange Arbitrage Systems
+Existing crypto arbitrage systems generally use one of three approaches:
+- simple threshold-based bots,
+- statistical spread predictors,
+- AI-assisted decision engines.
+
+Threshold-only systems are easy to deploy but frequently overtrade during noisy
+micro-spread conditions. Profit can disappear when costs are ignored.
+
+2.2 Cost-Aware Arbitrage
+A known best practice is profitability gating using:
+net_spread = gross_spread - (fees + slippage)
+This project explicitly applies this guard before execution, which prevented many
+loss-making trades in low-spread windows.
+
+2.3 Risk-Gated Execution
+Research and production systems often include kill-switches and risk limits. This
+project includes:
+- daily drawdown breaker,
+- optional consecutive-loss breaker,
+- Kelly-inspired size control tied to historical outcomes and AI confidence.
+
+2.4 Explainability and Operator Trust
+A major practical issue in trading bots is black-box behavior. The implemented execution
+feed and database logging address this by reporting route, reason, and outcome events.
+
+2.5 Gap Addressed by This FYP
+The project bridges a practical gap: combining multi-exchange scan, AI decisioning,
+risk gating, trade persistence, and operator-facing UX in one integrated academic
+system suitable for demo and defense.
+
+================================================================================
+CHAPTER 3: RESEARCH METHODOLOGY
+================================================================================
+
+3.1 Overall Research Design
+Methodology used: Design-and-Implement with iterative verification.
+Major phases:
+1) Environment and exchange integration,
+2) Core arbitrage logic,
+3) Safety/risk controls,
+4) Data persistence,
+5) UI and operator interaction,
+6) Validation using runtime behavior and DB evidence.
+
+3.2 System Architecture
+A) Backend (FastAPI, asyncio, CCXT):
+- continuous arbitrage loop,
+- REST endpoints for auth/history/threshold/chat/snapshot,
+- WebSocket endpoint for live market and event streaming.
+
+B) AI Layer:
+- AIAgent for execution-side opportunity analysis (Gemini with Groq fallback).
+- ChatBot for OpenAI-powered crypto-domain assistant responses and DB-aware trade
+  history answers.
+- GRU predictor for spread trend assistance and periodic auto-retraining from DB.
+
+C) Data Layer:
+- SQLite with WAL mode.
+- Tables: trades, llm_decisions, market_analysis.
+
+D) Frontend (React + TypeScript):
+- Home, Login, Dashboard, Blog.
+- Dashboard pages: overview, activity, database.
+- Sidebar tabs: chat and execution feed.
+
+3.3 Core Decision Pipeline
+The engine evaluates opportunities in this sequence:
+1) Fetch live prices and balances.
+2) Build all pair routes among currently tradeable exchanges.
+3) Select best spread route (with diversification logic).
+4) Compute total costs and net spread.
+5) Check threshold gate, net gate, AI gate, risk gate.
+6) Run precheck for route inventory and balances.
+7) Execute trade (or block with reason), then broadcast and persist.
+
+3.4 Profitability Formula
+Gross spread (%) computed from route buy/sell prices.
+Net spread (%) = gross spread - (TRADING_FEE_RATE + TRADING_SLIPPAGE_RATE)*100
+Execution can be blocked even when gross spread > threshold if net spread <= minimum.
+
+3.5 Risk Method
+- Daily drawdown breaker.
+- Consecutive-loss breaker (configurable).
+- Kelly-style position sizing from recent trade statistics and AI confidence.
+
+3.6 Model Training Method
+The GRU model uses spread sequences from llm_decisions table.
+Auto-train trigger:
+- after configured number of trades,
+- and minimum interval elapsed.
+Model/scaler are reloaded into runtime when retraining succeeds.
+
+3.7 Validation Approach
+Validation includes:
+- API endpoint behavior,
+- WebSocket event continuity,
+- trade ledger updates,
+- UI rendering of market, spread, feed, and status,
+- database-level result checks.
+
+================================================================================
+CHAPTER 4: IMPLEMENTATION
+================================================================================
+
+4.1 Backend Implementation
+Main entry:
+- main.py runs uvicorn with reload.
+
+Core service:
+- api.py contains environment loading, auth, runtime state, arbitrage loop, REST APIs,
+  websocket broadcaster, and event broadcasting.
+
+Important endpoints implemented:
+- POST /api/register
+- POST /api/token
+- POST /toggle_bot
+- POST /api/threshold
+- GET  /api/history
+- GET  /api/market-snapshot
+- POST /api/trade/approve
+- GET  /api/market-analysis
+- POST /api/chat
+- WS   /ws/market
+
+4.2 Exchange Execution Implementation
+File: execution/trader.py
+Implemented capabilities:
+- async CCXT clients for Binance/Bybit/Coinbase,
+- testnet/live toggling,
+- Bybit proxy-aware support,
+- symbol fallback handling,
+- balance fetch with exchange-specific account-type fallback,
+- outlier filtering for suspicious price deviations,
+- route precheck (buy quote funds + sell-side base inventory),
+- live market buy/sell execution,
+- Coinbase paper simulation mode (live price + simulated wallet accounting).
+
+4.3 Database Implementation
+File: core/database.py
+Implemented features:
+- automatic schema initialization/migration,
+- WAL mode for better concurrent behavior,
+- rich trade schema (route, pair, status, mode, fee/slippage, error_reason),
+- AI decision logging,
+- market analysis caching,
+- formatted trade history API helpers.
+
+4.4 Risk Engine Implementation
+File: core/risk_engine.py
+Implemented features:
+- daily PnL calculation from trades table,
+- optional exclusion of paper trades from risk checks,
+- consecutive-loss lookback breaker,
+- Kelly-based size estimation,
+- final validate_and_size_trade gatekeeper.
+
+4.5 Chat and AI Implementation
+Chat:
+- llm/chatbot.py
+- OpenAI responses API with crypto-domain guardrails.
+- Greeting behavior and bullet-style concise outputs.
+- Trade-history query path reads local DB and returns route/profit summary.
+
+Execution AI:
+- llm/ai_agent.py
+- Gemini primary, Groq fallback, JSON schema cleanup/failsafe.
+
+4.6 Frontend Implementation
+Routing:
+- App.tsx enforces public/protected routes.
+
+Pages:
+- Home: minimal intro, Features/How-It-Works sections, login/signup CTA.
+- Login: register/sign-in modes with validation and JWT storage.
+- Dashboard: multi-panel real-time operations UI.
+- Blog/Guides: operational documentation for end users.
+
+Dashboard highlights:
+- Vault cards (status, liquid capital, BTC balance, warnings).
+- Oracle row (3 exchange prices + best spread + threshold slider).
+- Spread and price charts.
+- Execution ledger with status and settlement.
+- AI Chat and Execution Feed in separate tabs.
+- Persisted chat/feed/chart state across route changes and refresh.
+
+================================================================================
+CHAPTER 5: RESULTS AND DISCUSSION
+================================================================================
+
+5.1 Functional Results (Observed)
+From local database snapshot (11-Apr-2026):
+- Total trades: 659
+- Successful trades: 622
+- Failed trades: 37
+- Aggregate profit from successful trade rows: 6785.71 USD
+- Execution modes observed:
+  - LIVE: 568
+  - COINBASE_PAPER: 90
+  - PRECHECK: 1
+- LLM decision rows logged: 437
+- Market analysis rows cached: 13
+
+5.2 Runtime Behavior Insights
+- The system correctly blocks non-profitable conditions via net-spread guard.
+- Trade execution frequency is sensitive to configured fee/slippage assumptions.
+- Route inventory precheck prevents execution when sell-side BTC is unavailable.
+- Feed messages communicate block/execute reasons to operator.
+
+5.3 UI/UX Improvements Achieved
+- Added minimalist homepage and clear auth entry flow.
+- Dashboard section navigation made functional (not just scroll behavior).
+- Chat and execution reasoning separated for clarity.
+- Trade/engine feed persistence and chart continuity improved.
+
+5.4 Discussion of Trade Blocking Cases
+A frequent operator confusion case was:
+- gross spread above threshold but no trade execution.
+Root cause:
+- net spread after costs became non-positive, so safety gate blocked execution.
+This is expected behavior for loss prevention.
+
+5.5 Limitations
+- Live execution quality depends on exchange API stability and latency.
+- Fee/slippage approximation may differ from exact fill realities.
+- Route opportunities can cluster, causing one route dominance.
+- Current scope is mainly BTC cross-exchange arbitrage workflow.
+
+5.6 Reliability and Security Notes
+- JWT-based protected endpoints were implemented.
+- Password hashing uses passlib with pbkdf2_sha256 in current code.
+- Trade persistence and audit logs improve post-trade accountability.
+
+================================================================================
+CHAPTER 6: CONCLUSION AND FUTURE WORK
+================================================================================
+
+6.1 Conclusion
+This FYP successfully delivered an integrated arbitrage platform that combines:
+- real-time exchange monitoring,
+- AI/risk-gated decisioning,
+- execution and persistence,
+- operator explainability via dashboard feed and ledger,
+- crypto-domain assistant support for market/trade queries.
+
+The implementation demonstrates a practical, modular architecture suitable for
+academic defense and future extension toward production-grade behavior.
+
+6.2 Future Work
+Recommended extensions:
+- Route-specific fee models (instead of single global cost assumptions).
+- Orderbook-based effective spread and slippage estimation.
+- More robust execution retry/reconciliation for partial fills.
+- Multi-asset support beyond BTC.
+- Advanced backtesting and parameter auto-tuning pipeline.
+- Fine-grained permissions/audit UI for enterprise operation.
+
+6.3 Defense Talking Points (Quick)
+- Why threshold alone is insufficient (need net spread after costs).
+- How risk breaker prevents overtrading during adverse sequences.
+- Why feed explainability matters for operator trust.
+- Difference between LIVE mode and COINBASE_PAPER mode.
+- How DB schema supports reproducibility and auditability.
+
+================================================================================
+REFERENCES (Draft Starter List - Replace with your required citation format)
+================================================================================
+[R1] FastAPI Official Documentation.
+[R2] CCXT Official Documentation.
+[R3] React + TypeScript Documentation.
+[R4] SQLite WAL Documentation.
+[R5] OpenAI API Documentation (chat assistant integration).
+[R6] Google Generative AI / Gemini Documentation.
+[R7] Groq API Documentation.
+[R8] Kelly Criterion references for position sizing.
+[R9] Selected papers on crypto arbitrage and exchange microstructure.
+
+================================================================================
+APPENDIX A: CURRENT FEATURE CHECKLIST (WHAT YOU HAVE DONE SO FAR)
+================================================================================
+
+[x] Multi-exchange price monitoring (Binance, Bybit, Coinbase)
+[x] Route-based spread evaluation
+[x] Threshold + net-spread execution gating
+[x] AI-assisted execution reasoning
+[x] Risk breaker and Kelly-based sizing
+[x] Auto/pending trade approval flow
+[x] Trade success/failure persistence in SQLite
+[x] Trade history API and dashboard execution ledger
+[x] Real-time WebSocket broadcasting for market/feed events
+[x] Chatbot with OpenAI provider + offline/local fallback
+[x] Chatbot trade-history answers from local DB
+[x] Homepage + login/signup flow
+[x] Dashboard activity/database sections
+[x] Chart/chat/feed persistence behavior
+[x] Blog/guide section for user onboarding and troubleshooting
+
+================================================================================
+APPENDIX B: IMPORTANT ENV FLAGS (DEFENSE READY NOTES)
+================================================================================
+
+EXCHANGE_TESTNET=true/false
+- true: uses testnet credentials
+- false: uses live credentials
+
+COINBASE_PAPER_MODE=true/false
+- true: Coinbase trades simulated with live prices
+- false: Coinbase real execution path
+
+AUTO_EXECUTION=true/false
+- true: executes immediately after passing all gates
+- false: waits for manual approval
+
+REQUIRE_POSITIVE_NET=true/false
+- true: blocks if net spread <= minimum
+
+PROFIT_ONLY_EXECUTION=true/false
+- true: execute only if estimated profit is positive (and above configured floor)
+
+================================================================================
+APPENDIX C: SHORT VIVA PREP Q/A
+================================================================================
+
+Q1: Why does bot block trades even when spread is above threshold?
+A: Because threshold checks gross spread. Final execution uses net spread after fees
+   and slippage; if net is non-positive, trade is blocked.
+
+Q2: How do you prove the bot actually executed trades?
+A: trades table in SQLite stores timestamp, route, mode, status, profit, and errors.
+   Dashboard execution ledger reads this table via /api/history.
+
+Q3: How is safety enforced?
+A: Multi-gate pipeline: spread gate, net-profit gate, AI gate, risk breaker, and
+   pre-execution inventory checks.
+
+Q4: Is your system only UI demo or full-stack?
+A: Full-stack. Backend trading loop, exchange APIs, DB persistence, and real-time UI
+   are fully integrated.
+
+================================================================================
+END OF THESIS DRAFT REPORT
+================================================================================

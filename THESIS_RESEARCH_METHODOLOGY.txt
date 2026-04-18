@@ -1,0 +1,253 @@
+================================================================================
+CHAPTER 3
+RESEARCH METHODOLOGY
+Project: AI Multi-Exchange Arbitrage Bot (ArbPro)
+================================================================================
+
+3.1 Methodological Approach
+This project follows a Design-and-Implement methodology for a real-time software
+system. The methodology combines:
+- system design (architecture and modules),
+- algorithm engineering (spread, net-profit, risk gating),
+- AI-assisted decisioning,
+- iterative implementation and validation using live runtime outputs.
+
+The goal was to build a practical arbitrage system that is not only executable, but also
+safe, explainable, and measurable for academic evaluation.
+
+--------------------------------------------------------------------------------
+3.2 Proposed Method
+--------------------------------------------------------------------------------
+
+The proposed method is a multi-stage arbitrage pipeline:
+
+Stage A: Multi-Exchange Data Ingestion
+- Fetch real-time prices and balances from Binance, Bybit, and Coinbase.
+- Normalize data and track exchange health states (LIVE/STALE/OFFLINE).
+
+Stage B: Route Construction
+- Generate exchange pairs and determine buy/sell direction automatically.
+- Compute gross spread (%) for each route.
+
+Stage C: Net-Profit Validation
+- Estimate costs (fee + slippage).
+- Compute net spread:
+  net_spread = gross_spread - (fee + slippage)
+- Reject economically weak opportunities early.
+
+Stage D: Decision and Risk Validation
+- Apply threshold gate.
+- Apply AI-informed gate (configurable strict/advisory).
+- Apply risk breaker and position sizing checks.
+- Apply inventory precheck (sell-side BTC and buy-side quote availability).
+
+Stage E: Execution and Logging
+- If all gates pass, execute route (live or configured paper branch).
+- Persist result in database (status, route, profit, error reason).
+- Broadcast event to dashboard feed and ledger.
+
+Stage F: Adaptive Learning
+- Use recent decision/spread history for periodic GRU retraining.
+- Reload model for updated predictive behavior.
+
+--------------------------------------------------------------------------------
+3.3 Models, Algorithms, and Frameworks Used
+--------------------------------------------------------------------------------
+
+3.3.1 Quantitative and Rule-Based Algorithms
+1) Spread Algorithm
+- For each route pair:
+  spread(%) = ((sell_price - buy_price) / buy_price) * 100
+
+2) Net Spread Algorithm
+- total_cost(%) = (TRADING_FEE_RATE + TRADING_SLIPPAGE_RATE) * 100
+- net_spread(%) = spread(%) - total_cost(%)
+
+3) Opportunity Gate Logic
+- opportunity = route_exists AND spread_gate AND net_gate AND ai_gate AND risk_gate
+
+4) Inventory Precheck
+- Ensures:
+  - sufficient quote asset on buy exchange,
+  - sufficient base asset (BTC) on sell exchange.
+
+5) Risk Algorithms
+- Daily drawdown breaker.
+- Consecutive-loss breaker (configurable).
+- Kelly-inspired position sizing:
+  - uses historical win/loss statistics and AI confidence.
+
+3.3.2 AI/ML Models
+1) GRU Predictor (PyTorch)
+- Input: sequence of spread values (window length = 10).
+- Output: next-step spread estimate.
+- Used for predictive support in the execution loop.
+
+2) LLM-Based Trade Reasoning Agent
+- Primary provider: Gemini
+- Fallback provider: Groq
+- Output schema includes decision, confidence, reasoning, position size.
+
+3) OpenAI-Based Chat Assistant
+- Dedicated to user-facing chat and crypto-domain Q/A.
+- Can answer trade-history questions by reading local DB records.
+
+3.3.3 Software Frameworks
+- Backend: FastAPI + asyncio + Uvicorn
+- Exchange connectivity: CCXT
+- Database: SQLite (WAL mode)
+- Frontend: React + TypeScript + Vite + Tailwind + Recharts
+- Authentication: JWT with OAuth2 flow
+
+--------------------------------------------------------------------------------
+3.4 System Architecture
+--------------------------------------------------------------------------------
+
+3.4.1 High-Level Architecture (Textual Diagram)
+
+ [User/UI]
+    |
+    v
+ [React Dashboard + Chat/Feed]
+    |
+    | REST + WebSocket
+    v
+ [FastAPI Backend Engine]
+    |        |         |
+    |        |         +--> [SQLite DB: trades, llm_decisions, market_analysis]
+    |        |
+    |        +--> [AI Layer: GRU + Execution LLM + Chat LLM]
+    |
+    +--> [CCXT Exchange Layer: Binance / Bybit / Coinbase]
+
+3.4.2 Backend Architecture
+- API Layer (`api.py`):
+  handles auth, endpoints, websocket, runtime state.
+- Engine Loop:
+  scans market continuously and evaluates opportunities.
+- Execution Layer (`execution/trader.py`):
+  precheck + execution route logic.
+- Data Layer (`core/database.py`):
+  persistence, migrations, history retrieval.
+- Risk Layer (`core/risk_engine.py`):
+  breaker + sizing.
+- Learning Layer (`core/online_trainer.py`):
+  retraining loop.
+
+3.4.3 Frontend Architecture
+- Public pages: Home, Login
+- Protected pages: Dashboard, Blog/Guides
+- Dashboard modules:
+  - vault cards,
+  - oracle row,
+  - spread/price charts,
+  - execution ledger,
+  - chat + execution feed.
+
+--------------------------------------------------------------------------------
+3.5 Design Diagrams (Text Versions for Thesis)
+--------------------------------------------------------------------------------
+
+3.5.1 Sequence Diagram (Opportunity to Execution)
+
+ User -> Dashboard: Engage Algorithm
+ Dashboard -> Backend: POST /toggle_bot
+ Backend -> Exchanges: fetch prices/balances
+ Backend -> Engine: build routes + compute spreads
+ Engine -> Risk/AI Gates: validate opportunity
+ alt Pass
+   Engine -> Trader: execute buy/sell
+   Trader -> DB: save SUCCESS/FAILED row
+   Backend -> Dashboard(WS): trade/feed update
+ else Block
+   Backend -> Dashboard(WS): block reason update
+
+3.5.2 Data Flow Diagram (Simplified)
+
+ Exchanges --> Price/Balance Fetch --> Route Calculator --> Gate Validator
+ Gate Validator --> (Execute) --> Trade Executor --> DB Logger --> UI Feed/Ledger
+ Gate Validator --> (Block)   --> Reason Broadcaster --> UI Feed
+
+3.5.3 Model Lifecycle Diagram (GRU)
+
+ CSV/DB Spreads --> Preprocessing --> GRU Train --> Model Save
+                                      ^
+                                      |
+                         Auto-retrain Trigger (runtime trades)
+
+--------------------------------------------------------------------------------
+3.6 Workflow Description (Operational)
+--------------------------------------------------------------------------------
+
+Workflow-1: Startup Workflow
+1) Load environment configuration.
+2) Initialize database schema and runtime state.
+3) Load GRU model and scaler.
+4) Start FastAPI and websocket services.
+5) Start background arbitrage loop.
+
+Workflow-2: User Workflow
+1) User registers/logs in.
+2) JWT token issued and stored client-side.
+3) User opens dashboard and engages algorithm.
+4) User monitors prices, spread, feed, and ledger.
+
+Workflow-3: Trading Workflow
+1) Fetch market data.
+2) Compute candidate routes and best spread.
+3) Evaluate gates (spread, net, AI, risk, inventory).
+4) Execute if valid, otherwise block with reason.
+5) Persist and broadcast outcome.
+
+Workflow-4: Learning Workflow
+1) Count new trade events.
+2) If threshold reached and cooldown passed, retrain GRU from DB spreads.
+3) Save and reload model/scaler.
+4) Continue loop with updated model.
+
+--------------------------------------------------------------------------------
+3.7 Research Validation Strategy
+--------------------------------------------------------------------------------
+
+Validation was performed through:
+- endpoint-level verification (auth, threshold, history, chat),
+- websocket live update verification,
+- database verification of status/profit/route rows,
+- dashboard verification of feed + chart + ledger synchronization,
+- runtime observation of blocked vs executed trades under different spread conditions.
+
+Key validation indicators:
+- high trade success ratio in stored data,
+- consistent persistence of trade outcomes,
+- transparent failure reasons in feed and DB,
+- no dependency on manual post-processing for reporting.
+
+--------------------------------------------------------------------------------
+3.8 Methodology Strengths and Constraints
+--------------------------------------------------------------------------------
+
+Strengths:
+- Safety-first execution via multi-gate logic.
+- Explainability through feed and detailed trade logs.
+- Modular architecture suitable for future extensions.
+- Adaptive behavior through retraining support.
+
+Constraints:
+- Cost assumptions still approximate real fills.
+- Route distribution can be imbalanced.
+- Performance and behavior depend on API/network conditions.
+- Current asset focus is primarily BTC route execution.
+
+--------------------------------------------------------------------------------
+3.9 Chapter Summary
+--------------------------------------------------------------------------------
+
+This methodology transforms arbitrage from a simple threshold script into a full
+decision system. The implemented pipeline integrates market data, spread analytics,
+AI/risk checks, execution control, persistence, and operator visibility in one framework.
+This chapter demonstrates how the proposed approach was concretely translated into
+deployable modules and measurable workflows.
+
+================================================================================
+END OF CHAPTER 3 (RESEARCH METHODOLOGY)
+================================================================================

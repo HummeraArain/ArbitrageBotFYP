@@ -1,71 +1,132 @@
-# ArbPro - AI Arbitrage Bot 🚀
-**v7.0 - Multi-Tier AI Architecture & Risk Guard Edition**
+# ArbPro - AI Arbitrage Bot
 
-An enterprise-grade, AI-powered cryptocurrency arbitrage system designed to detect and exploit price discrepancies between **Binance** and **Bybit** on the **BTC/USDT** pair. Featuring a **5-Tier Autonomous Agent Stack**, a **Kelly Criterion Risk Engine**, and a high-fidelity glassmorphism dashboard.
+ArbPro is a Final Year Project focused on cross-exchange crypto arbitrage monitoring and execution. The system combines a FastAPI backend, a React dashboard, exchange integrations, a GRU-based spread predictor, operator authentication, and a local SQLite database for trade history, summaries, and execution logs.
 
-## 🌟 Key Features (v7.0)
+## Current Scope
 
-*   **🧠 5-Tier LLM Multi-Agent System**:
-    *   **Tier 1 (AIAgent)**: Real-time decision logic & JSON schema validation.
-    *   **Tier 2 (MarketAnalyst)**: Identifies market regimes (Trending/Volatile) from 50 OHLCV candles.
-    *   **Tier 3 (StrategyAdvisor)**: Batch-processed weekly portfolio & spread optimization.
-    *   **Tier 4 (AnalystBot)**: Context-aware interactive assistant with senior quant persona.
-    *   **Tier 5 (RiskEngine)**: Fractional Kelly sizing & multi-layer circuit breakers.
-*   **🛡️ Dynamic Risk Management**:
-    *   **Kelly Criterion**: Automated position sizing (0.2x multiplier) for capital preservation.
-    *   **Circuit Breakers**: Hard daily drawdown limits ($50) and consecutive loss protection.
-*   **📡 Real-Time Intelligent Oracles**: High-frequency price fetching from Binance and Bybit via CCXT async links.
-*   **📊 Next-Gen Dashboard**: Modular React interface with **Recharts** for real-time spread visualizers and market status monitoring.
-*   **🗄️ DatabaseCore v7.0**: SQLite WAL-mode engine with full LLM decision auditing and market analysis caching.
+- Multi-exchange monitoring for Binance, Bybit, and Coinbase
+- Real-time price, balance, BTC holding, and spread dashboard
+- JWT-based user login and per-user trade history isolation
+- Trade execution logging with `SUCCESSFUL`, `FAILED`, and `BLOCKED` records
+- Coinbase paper-wallet support for simulation with live market prices
+- GRU spread prediction loaded from local trained model files
+- Crypto-only chat assistant for market questions and local trade history
+- Docker support for backend + frontend deployment
 
-## 🏗️ Project Architecture
+## Stack
 
-### [A] Backend (Python / FastAPI)
-*   **`api.py`**: Central WebSocket engine & Tiered LLM router.
-*   **`core/risk_engine.py`**: Circuit breakers and Kelly position sizing.
-*   **`core/database.py`**: High-concurrency WAL storage and auditing.
-*   **`llm/`**: Modular logic for all 5 AI Agents (GenAI v1.0+ SDK).
-*   **`execution/trader.py`**: CCXT order execution with proxy-restricted Bybit support.
+- Backend: FastAPI, Uvicorn, SQLite, CCXT, JWT, Passlib
+- Frontend: React, TypeScript, Vite, Tailwind CSS, Recharts
+- AI/ML: PyTorch GRU model, OpenAI chat integration, Gemini/Groq hooks
+- Storage: `arbitrage.db` and `operator_vault.db`
 
-### [B] Frontend (React / TypeScript)
-*   **`Dashboard.tsx`**: Main UI engine for real-time telemetry.
-*   **`components/dashboard/`**: Reusable modules (`Header`, `PortfolioMetrics`, `OracleFeeds`, `Sidebar`).
-*   **`Sidebar.tsx`**: Context-aware AI Logic Core with integrated chat.
+## Main Project Files
 
-## 🛠️ Tech Stack
+- [api.py](./api.py): main backend app, REST APIs, websocket feed, bot loop
+- [execution/trader.py](./execution/trader.py): exchange integration and execution logic
+- [core/database.py](./core/database.py): trade storage, summaries, filtering, migrations
+- [core/risk_engine.py](./core/risk_engine.py): trade approval and circuit-breaker logic
+- [predictor.py](./predictor.py): GRU model loader and inference
+- [Frontend/src/pages/Dashboard.tsx](./Frontend/src/pages/Dashboard.tsx): main dashboard UI
 
-*   **Backend**: Python 3.10+, FastAPI, Asyncio, CCXT, JWT, SQLite 3 (WAL).
-*   **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Recharts, Lucide.
-*   **AI/ML**: Google Generative AI (Gemini 2.0 Flash), GRU Neural Network (TensorFlow).
-*   **Design**: Modern Dark-Mode Glassmorphism.
+## Local Run
 
-## 🚀 Quick Start
+### 1. Backend
 
-### 1. Requirements
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Or .\.venv\Scripts\activate
+.venv\Scripts\activate
 pip install -r requirements.txt
+python main.py
 ```
 
-### 2. Environment (.env)
-```env
-GEMINI_API_KEY=your_key
-BINANCE_TESTNET_API_KEY=your_key
-BINANCE_TESTNET_SECRET=your_secret
-BYBIT_TESTNET_API_KEY=your_key
-BYBIT_TESTNET_SECRET=your_secret
-JWT_SECRET_KEY=your_custom_secret
+Backend runs on:
+
+- `http://127.0.0.1:8000`
+
+### 2. Frontend
+
+```bash
+cd Frontend
+npm install
+npm run dev
 ```
 
-### 3. Launch
-**Backend:** `python main.py`
-**Frontend:** `cd Frontend && npm install && npm run dev`
+Frontend runs on:
 
-Optional frontend API override:
-```env
-VITE_API_BASE_URL=http://127.0.0.1:8000
+- `http://127.0.0.1:8080`
+
+## Environment
+
+Use `.env.example` as the base template and create your own `.env`.
+
+Important variables include:
+
+- `OPENAI_API_KEY`
+- `OPENAI_CHAT_MODEL`
+- `JWT_SECRET_KEY`
+- `EXCHANGE_TESTNET`
+- `BINANCE_TESTNET_API_KEY`
+- `BINANCE_TESTNET_SECRET`
+- `BYBIT_TESTNET_API_KEY`
+- `BYBIT_TESTNET_SECRET`
+- `COINBASE_PAPER_MODE`
+- `COINBASE_PAPER_START_USD`
+- `COINBASE_PAPER_START_BTC`
+
+## Model Files
+
+The current project uses these local model assets:
+
+- `gru_model.pth`
+- `scaler_params.npy`
+
+These are loaded by [predictor.py](./predictor.py) at runtime.
+
+## Database Notes
+
+- `arbitrage.db`: trade history, summaries, market caches, paper wallet
+- `operator_vault.db`: registered users and password hashes
+
+Trade history is isolated per authenticated user in the dashboard and summary APIs.
+
+## Docker
+
+Run the full stack with Docker:
+
+```bash
+docker compose up --build
 ```
 
----
-*Developed as a Final Year Project (FYP) for Cross-Exchange Arbitrage & AI Optimization.*
+Services:
+
+- Frontend: `http://localhost:8080`
+- Backend API: `http://localhost:8000`
+
+Docker files included:
+
+- [Dockerfile](./Dockerfile)
+- [docker-compose.yml](./docker-compose.yml)
+- [Frontend/Dockerfile](./Frontend/Dockerfile)
+- [Frontend/nginx.conf](./Frontend/nginx.conf)
+
+## Git Workflow
+
+This repo is already connected to GitHub. A typical push flow is:
+
+```bash
+git status
+git add .
+git commit -m "Update ArbPro project"
+git push -u origin feature/codex_Project
+```
+
+## Notes
+
+- Coinbase paper mode uses simulated funds with live market prices.
+- Chart visuals are live snapshot based, not exchange-native tick-by-tick streaming.
+- Some large runtime files and databases may be intentionally kept for demo purposes depending on your submission needs.
+
+## Project Goal
+
+This project was developed as an FYP to demonstrate how AI-assisted arbitrage monitoring, risk controls, execution flow, and explainable dashboarding can be combined into one integrated crypto trading system.

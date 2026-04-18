@@ -61,12 +61,13 @@ VAULT_DB = "operator_vault.db"
 
 # 1. GLOBAL STATE
 bot_active = False
+bot_operator = None
 current_threshold = 0.08
 spread_buffer = []
 trade_history = []
 total_profit = 0.0
 current_market_state = {}
-active_connections = set()
+active_connections = {}
 EXCHANGE_KEYS = ("binance", "bybit", "coinbase")
 last_known_balances = {k: None for k in EXCHANGE_KEYS}
 last_known_btc_balances = {k: None for k in EXCHANGE_KEYS}
@@ -90,6 +91,8 @@ _trades_since_train = 0
 _last_train_ts = 0.0
 _last_gate_block_msg_ts = 0.0
 _last_no_trade_feedback_ts = 0.0
+_last_blocked_trade_sig = ""
+_last_blocked_trade_ts = 0.0
 
 # Execution control
 AUTO_EXECUTION = _as_bool(os.getenv("AUTO_EXECUTION"), default=True)
@@ -107,6 +110,7 @@ ENGINE_LOOP_INTERVAL_SEC = max(0.5, float((os.getenv("ENGINE_LOOP_INTERVAL_SEC")
 ALLOW_NEGATIVE_EST_PROFIT = _as_bool(os.getenv("ALLOW_NEGATIVE_EST_PROFIT"), default=False)
 PROFIT_ONLY_EXECUTION = _as_bool(os.getenv("PROFIT_ONLY_EXECUTION"), default=True)
 MIN_EST_PROFIT_USD = max(0.0, float((os.getenv("MIN_EST_PROFIT_USD") or "0.0").strip()))
+ENFORCE_AI_SPREAD_GATE = _as_bool(os.getenv("ENFORCE_AI_SPREAD_GATE"), default=False)
 
 # 2. SHARED INSTANCES
 db_core = DatabaseCore(db_path=TRADES_DB)
@@ -151,10 +155,13 @@ logger.info(
     f"Exchange mode: {'TESTNET' if EXCHANGE_TESTNET else 'LIVE'} | "
     f"Binance key loaded: {'yes' if bool(binance_api_key) else 'no'} | "
     f"Bybit key loaded: {'yes' if bool(bybit_api_key) else 'no'} | "
+    f"Bybit hostname: {(os.getenv('BYBIT_HOSTNAME') or 'bybit.com').strip()} | "
+    f"Bybit proxy: {'configured' if bool((os.getenv('BYBIT_PROXY_URL') or os.getenv('HTTPS_PROXY') or os.getenv('HTTP_PROXY') or '').strip()) else 'none'} | "
     f"Coinbase key loaded: {'yes' if bool(coinbase_api_key) else 'no'} | "
     f"OpenAI chat key loaded: {'yes' if bool(OPENAI_CHAT_KEY) else 'no'} | "
     f"Coinbase paper mode: {'enabled' if _as_bool(os.getenv('COINBASE_PAPER_MODE'), False) else 'disabled'} | "
-    f"Auto execution: {'enabled' if AUTO_EXECUTION else 'disabled'}"
+    f"Auto execution: {'enabled' if AUTO_EXECUTION else 'disabled'} | "
+    f"AI spread gate: {'strict' if ENFORCE_AI_SPREAD_GATE else 'advisory'}"
 )
 
 trader = TradeExecutor(
@@ -200,6 +207,10 @@ def init_vault_db():
 
 def _issue_access_token(username: str) -> str:
     return jwt.encode({"sub": username}, SECRET_KEY, ALGORITHM)
+
+
+def _normalize_username(username: str | None) -> str:
+    return str(username or "").strip().lower()
 
 
 def _estimate_net_profit_usd(net_spread_pct: float, buy_price: float, quantity: float) -> float:
@@ -248,7 +259,7 @@ def _verify_credentials(username: str, password: str) -> bool:
 def load_initial_state():
     global trade_history, total_profit
     try:
-        trade_history = db_core.get_trade_history(limit=50)
+        trade_history = db_core.get_trade_history(limit=500)
         total_profit = db_core.get_total_profit()
     except Exception as e:
         logger.error(f"Failed to load initial state: {e}")
@@ -270,7 +281,8 @@ def _init_runtime_state():
                 """
                 INSERT OR IGNORE INTO runtime_state (key, value) VALUES
                 ('bot_active', '0'),
-                ('current_threshold', '0.08')
+                ('current_threshold', '0.08'),
+                ('bot_operator', '')
                 """
             )
             conn.commit()
@@ -297,7 +309,7 @@ def _save_runtime_state(key: str, value: str):
 
 
 def _load_runtime_state():
-    global bot_active, current_threshold
+    global bot_active, bot_operator, current_threshold
     try:
         with sqlite3.connect(TRADES_DB) as conn:
             conn.row_factory = sqlite3.Row
@@ -305,25 +317,33 @@ def _load_runtime_state():
             lookup = {str(r["key"]): str(r["value"]) for r in rows}
 
         bot_active = _as_bool(lookup.get("bot_active"), default=False)
+        bot_operator = _normalize_username(lookup.get("bot_operator"))
         try:
             current_threshold = float(lookup.get("current_threshold", str(current_threshold)))
         except Exception:
             pass
+        if bot_active and not bot_operator:
+            bot_active = False
+            _save_runtime_state("bot_active", "0")
+            logger.warning("Runtime state requested active bot without an owner; bot was reset to inactive.")
     except Exception as e:
         logger.error(f"Failed to load runtime state: {e}")
 
 
-async def broadcast_state(data):
+async def broadcast_state(data, username: str | None = None):
     if not active_connections:
         return
-    disconnected = set()
-    for ws in active_connections:
+    target_user = _normalize_username(username)
+    disconnected = []
+    for ws, connected_user in list(active_connections.items()):
+        if target_user and connected_user != target_user:
+            continue
         try:
             await ws.send_json(data)
         except Exception:
-            disconnected.add(ws)
+            disconnected.append(ws)
     for ws in disconnected:
-        active_connections.remove(ws)
+        active_connections.pop(ws, None)
 
 
 async def maybe_auto_train():
@@ -353,7 +373,10 @@ async def maybe_auto_train():
                 _trades_since_train = 0
                 _last_train_ts = time.time()
                 logger.info(f"Auto-training completed: {details}")
-                await broadcast_state({"type": "ai_msg", "text": "Model auto-training completed from recent trade data."})
+                await broadcast_state(
+                    {"type": "ai_msg", "text": "Model auto-training completed from recent trade data."},
+                    username=bot_operator,
+                )
             else:
                 logger.info(f"Auto-training skipped: {details}")
         except Exception as e:
@@ -364,7 +387,8 @@ async def maybe_auto_train():
 async def continuous_arbitrage_loop():
     global bot_active, current_threshold, spread_buffer, trade_history, total_profit, current_market_state
     global pending_trade, pending_approved, _approval_event, _trades_since_train
-    global last_known_balances, last_known_btc_balances, last_known_prices, last_known_symbols, _last_gate_block_msg_ts, _last_no_trade_feedback_ts
+    global last_known_balances, last_known_btc_balances, last_known_prices, last_known_symbols
+    global _last_gate_block_msg_ts, _last_no_trade_feedback_ts, _last_blocked_trade_sig, _last_blocked_trade_ts
 
     def _build_pair_rows(price_map: dict, candidate_keys: list[str]):
         rows = []
@@ -408,6 +432,7 @@ async def continuous_arbitrage_loop():
 
     while True:
         try:
+            current_bot_user = _normalize_username(bot_operator)
             # A. Fetch market prices with status per exchange
             prices = {k: 0.0 for k in EXCHANGE_KEYS}
             price_statuses = {k: "OFFLINE" for k in EXCHANGE_KEYS}
@@ -583,7 +608,7 @@ async def continuous_arbitrage_loop():
                     ai_pred_error = str(e)
 
             ai_gate_pass = True
-            if ai_pred_valid and ai_pred is not None:
+            if ENFORCE_AI_SPREAD_GATE and ai_pred_valid and ai_pred is not None:
                 ai_gate_pass = abs(ai_pred) >= current_threshold
 
             live_count = len(tradeable_candidates)
@@ -650,7 +675,8 @@ async def continuous_arbitrage_loop():
                                 f"Trade blocked by AI prediction gate. spread={tradeable_spread:.4f}% "
                                 f"prediction={float(ai_pred):.4f}% threshold={current_threshold:.4f}%"
                             ),
-                        }
+                        },
+                        username=current_bot_user,
                     )
 
             if bot_active and not opportunity:
@@ -659,36 +685,113 @@ async def continuous_arbitrage_loop():
                     _last_no_trade_feedback_ts = now_ts
                     feedback_text = None
                     if opportunity_block_reason == "NO_LIVE_ROUTE":
-                        feedback_text = f"No live route yet. Live exchanges: {live_count}/{len(EXCHANGE_KEYS)}."
+                        feedback_text = (
+                            "Trade Status: BLOCKED\n"
+                            f"- Reason: No live route\n"
+                            f"- Live exchanges: {live_count}/{len(EXCHANGE_KEYS)}"
+                        )
                     elif opportunity_block_reason == "ROUTES_IN_COOLDOWN":
-                        feedback_text = "Routes temporarily cooling down after recent failed executions."
+                        feedback_text = (
+                            "Trade Status: BLOCKED\n"
+                            "- Reason: Route cooldown active after recent failed executions."
+                        )
                     elif opportunity_block_reason == "SELL_SIDE_INVENTORY_UNAVAILABLE":
                         feedback_text = (
-                            "Sell-side BTC inventory unavailable on one or more exchanges. "
-                            "Fund BTC on target sell exchange to unlock those routes."
+                            "Trade Status: BLOCKED\n"
+                            "- Reason: Sell-side BTC inventory unavailable.\n"
+                            "- Action: Fund BTC on target sell exchange."
                         )
                     elif opportunity_block_reason == "SPREAD_BELOW_THRESHOLD":
                         feedback_text = (
-                            f"Monitoring: best spread {tradeable_spread:.4f}% is below threshold "
-                            f"{current_threshold:.4f}%."
+                            "Trade Status: BLOCKED\n"
+                            "- Reason: Spread below threshold\n"
+                            f"- Gross spread: {tradeable_spread:.4f}%\n"
+                            f"- Threshold: {current_threshold:.4f}%"
                         )
                     elif opportunity_block_reason == "NET_SPREAD_BELOW_MIN":
                         feedback_text = (
-                            f"Net spread {net_spread:.4f}% is below minimum {MIN_NET_SPREAD:.4f}%. "
-                            "Execution paused by net-spread guard."
+                            "Trade Status: BLOCKED\n"
+                            "- Reason: Net spread guard\n"
+                            f"- Gross spread: {tradeable_spread:.4f}%\n"
+                            f"- Estimated costs: {total_costs:.4f}%\n"
+                            f"- Net spread: {net_spread:.4f}%\n"
+                            f"- Minimum net: {MIN_NET_SPREAD:.4f}%"
                         )
                     elif opportunity_block_reason == "AI_PREDICTION_BELOW_THRESHOLD" and ai_pred_valid:
                         feedback_text = (
-                            f"AI gate hold: prediction {float(ai_pred):.4f}% below threshold "
-                            f"{current_threshold:.4f}%."
+                            "Trade Status: BLOCKED\n"
+                            "- Reason: AI prediction gate\n"
+                            f"- Prediction: {float(ai_pred):.4f}%\n"
+                            f"- Threshold: {current_threshold:.4f}%"
                         )
                     elif opportunity_block_reason == "RISK_BREAKER_ACTIVE":
-                        feedback_text = f"Risk breaker active: {breaker_status.get('reason', 'unknown')}."
+                        feedback_text = (
+                            "Trade Status: BLOCKED\n"
+                            f"- Reason: Risk breaker\n"
+                            f"- Detail: {breaker_status.get('reason', 'unknown')}"
+                        )
                     if feedback_text:
-                        await broadcast_state({"type": "ai_msg", "text": feedback_text})
+                        await broadcast_state({"type": "ai_msg", "text": feedback_text}, username=current_bot_user)
+                        if current_bot_user:
+                            blocked_pair = (
+                                (buy_symbol or "BTC/USDT")
+                                if buy_symbol == sell_symbol
+                                else f"{buy_symbol or 'BTC/USDT'} -> {sell_symbol or 'BTC/USDT'}"
+                            )
+                            blocked_reason = feedback_text.replace("Trade Status: BLOCKED\n", "").strip().replace("\n", " | ")
+                            blocked_signature = "|".join(
+                                [
+                                    current_bot_user,
+                                    str(opportunity_block_reason or "UNKNOWN"),
+                                    str(route or "NO_ROUTE"),
+                                    str(blocked_pair),
+                                ]
+                            )
+                            if (
+                                blocked_signature != _last_blocked_trade_sig
+                                or (now_ts - _last_blocked_trade_ts) >= max(60.0, NO_TRADE_FEEDBACK_INTERVAL_SEC * 4)
+                            ):
+                                blocked_rec = {
+                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "route": route,
+                                    "pair": blocked_pair,
+                                    "mode": "LIVE",
+                                    "status": "BLOCKED",
+                                    "profit": "$0.00",
+                                    "net_profit": "$0.00",
+                                    "error": blocked_reason,
+                                }
+                                save_trade(
+                                    route=route,
+                                    profit=0.0,
+                                    username=current_bot_user,
+                                    symbol=buy_symbol or sell_symbol or "BTC/USDT",
+                                    pair=blocked_pair,
+                                    buy_exchange=buy_exchange_key.upper() if buy_exchange_key else None,
+                                    sell_exchange=sell_exchange_key.upper() if sell_exchange_key else None,
+                                    buy_price=buy_price,
+                                    sell_price=sell_price,
+                                    spread_pct=tradeable_spread,
+                                    quantity=0.0,
+                                    execution_mode="LIVE",
+                                    status="BLOCKED",
+                                    error_reason=blocked_reason,
+                                    fee_pct=0.0,
+                                    slippage_pct=0.0,
+                                )
+                                trade_history.insert(0, blocked_rec)
+                                _last_blocked_trade_sig = blocked_signature
+                                _last_blocked_trade_ts = now_ts
+                                await broadcast_state(
+                                    {"type": "trade_blocked", "trade": blocked_rec, "error": blocked_reason},
+                                    username=current_bot_user,
+                                )
 
             if bot_active and opportunity:
-                await broadcast_state({"type": "ai_msg", "text": f"Opportunity detected on route {route}. Consulting AI Agent..."})
+                await broadcast_state(
+                    {"type": "ai_msg", "text": f"Opportunity detected on route {route}. Consulting AI Agent..."},
+                    username=current_bot_user,
+                )
                 try:
                     ai_analysis = await ai_agent.analyze_opportunity(buy_price, sell_price, tradeable_spread)
                     db_core.log_llm_decision(buy_price, sell_price, tradeable_spread, ai_analysis)
@@ -696,16 +799,22 @@ async def continuous_arbitrage_loop():
                     decision = ai_analysis.get("decision", "REJECT")
                     conf = ai_analysis.get("confidence", 0)
                     reason = ai_analysis.get("reasoning", "No context provided.")
-                    await broadcast_state({"type": "ai_msg", "text": f"AI Analysis ({conf}% conf): {decision}. Rationale: {reason}"})
+                    await broadcast_state(
+                        {"type": "ai_msg", "text": f"AI Analysis ({conf}% conf): {decision}. Rationale: {reason}"},
+                        username=current_bot_user,
+                    )
 
                     risk = risk_engine.validate_and_size_trade(decision, conf)
                     if not risk["approved"]:
-                        await broadcast_state({"type": "ai_msg", "text": f"RISK VETO: {risk['reason']}"})
+                        await broadcast_state({"type": "ai_msg", "text": f"RISK VETO: {risk['reason']}"}, username=current_bot_user)
                     elif decision == "EXECUTE":
                         raw_size = float(risk.get("size") or 0.0)
                         trade_size = min(raw_size, MAX_EXECUTION_SIZE)
                         if trade_size <= 0:
-                            await broadcast_state({"type": "ai_msg", "text": "Risk sizing produced non-positive trade size. Skipping."})
+                            await broadcast_state(
+                                {"type": "ai_msg", "text": "Risk sizing produced non-positive trade size. Skipping."},
+                                username=current_bot_user,
+                            )
                             continue
 
                         est_profit = _estimate_net_profit_usd(
@@ -725,7 +834,8 @@ async def continuous_arbitrage_loop():
                                         f"Execution skipped: estimated net profit {est_profit:.2f} USD is below "
                                         f"minimum {MIN_EST_PROFIT_USD:.2f} USD."
                                     ),
-                                }
+                                },
+                                username=current_bot_user,
                             )
                             continue
                         if (not PROFIT_ONLY_EXECUTION) and (not ALLOW_NEGATIVE_EST_PROFIT) and est_profit <= 0:
@@ -736,7 +846,8 @@ async def continuous_arbitrage_loop():
                                         f"Execution skipped: estimated net profit is {est_profit:.2f} USD "
                                         "(non-positive after costs)."
                                     ),
-                                }
+                                },
+                                username=current_bot_user,
                             )
                             continue
                         trade_symbol = (buy_symbol or "BTC/USDT") if buy_symbol == sell_symbol else f"{buy_symbol or 'BTC/USDT'} -> {sell_symbol or 'BTC/USDT'}"
@@ -755,21 +866,22 @@ async def continuous_arbitrage_loop():
                                 {
                                     "type": "ai_msg",
                                     "text": f"Auto execution active. Executing {trade_symbol} on route {route}.",
-                                }
+                                },
+                                username=current_bot_user,
                             )
                         else:
                             pending_approved = None
                             _approval_event.clear()
-                            await broadcast_state({"type": "pending_trade", "trade": pending_trade})
+                            await broadcast_state({"type": "pending_trade", "trade": pending_trade}, username=current_bot_user)
                             try:
                                 await asyncio.wait_for(_approval_event.wait(), timeout=MANUAL_APPROVAL_TIMEOUT_SEC)
                                 if pending_approved:
                                     should_execute = True
-                                    await broadcast_state({"type": "ai_msg", "text": "Executing approved trade..."})
+                                    await broadcast_state({"type": "ai_msg", "text": "Executing approved trade..."}, username=current_bot_user)
                                 else:
-                                    await broadcast_state({"type": "ai_msg", "text": "Trade rejected by operator."})
+                                    await broadcast_state({"type": "ai_msg", "text": "Trade rejected by operator."}, username=current_bot_user)
                             except asyncio.TimeoutError:
-                                await broadcast_state({"type": "ai_msg", "text": "Approval timeout. Trade cancelled."})
+                                await broadcast_state({"type": "ai_msg", "text": "Approval timeout. Trade cancelled."}, username=current_bot_user)
 
                         if should_execute:
                             execution_result = await trader.execute_arbitrage(
@@ -803,7 +915,8 @@ async def continuous_arbitrage_loop():
                                                     f"Routes selling on {blocked_sell_exchange.upper()} paused for "
                                                     f"{int(SELL_INVENTORY_BLOCK_SEC)}s."
                                                 ),
-                                            }
+                                            },
+                                            username=current_bot_user,
                                         )
                                 fail_rec = {
                                     "time": datetime.now().strftime("%H:%M:%S"),
@@ -817,6 +930,7 @@ async def continuous_arbitrage_loop():
                                 save_trade(
                                     route=route,
                                     profit=0.0,
+                                    username=current_bot_user,
                                     symbol=buy_symbol or sell_symbol or "BTC/USDT",
                                     pair=trade_symbol,
                                     buy_exchange=buy_exchange_key.upper() if buy_exchange_key else None,
@@ -832,7 +946,10 @@ async def continuous_arbitrage_loop():
                                     slippage_pct=SLIPPAGE_RATE * 100.0,
                                 )
                                 trade_history.insert(0, fail_rec)
-                                await broadcast_state({"type": "trade_failed", "trade": fail_rec, "error": fail_reason})
+                                await broadcast_state(
+                                    {"type": "trade_failed", "trade": fail_rec, "error": fail_reason},
+                                    username=current_bot_user,
+                                )
                             else:
                                 route_key = f"{buy_exchange_key}->{sell_exchange_key}"
                                 route_fail_until[route_key] = 0.0
@@ -846,12 +963,14 @@ async def continuous_arbitrage_loop():
                                         {
                                             "type": "ai_msg",
                                             "text": "Coinbase route executed in simulated-funds mode with live market prices.",
-                                        }
+                                        },
+                                        username=current_bot_user,
                                     )
 
                                 save_trade(
                                     route=route,
                                     profit=est_profit,
+                                    username=current_bot_user,
                                     symbol=buy_symbol or sell_symbol or "BTC/USDT",
                                     pair=trade_symbol,
                                     buy_exchange=buy_exchange_key.upper() if buy_exchange_key else None,
@@ -877,7 +996,10 @@ async def continuous_arbitrage_loop():
                                     "profit": f"{'+' if est_profit >= 0 else '-'}${abs(est_profit):.2f}",
                                 }
                                 trade_history.insert(0, trade_rec)
-                                await broadcast_state({"type": "trade", "trade": trade_rec, "raw_profit": est_profit})
+                                await broadcast_state(
+                                    {"type": "trade", "trade": trade_rec, "raw_profit": est_profit},
+                                    username=current_bot_user,
+                                )
                                 _trades_since_train += 1
                                 await maybe_auto_train()
 
@@ -1056,11 +1178,28 @@ async def login(user: dict):
 
 @app.post("/toggle_bot")
 async def toggle_bot(payload: dict, user: str = Depends(get_current_user)):
-    global bot_active
-    bot_active = payload.get("active", False)
+    global bot_active, bot_operator, pending_trade, pending_approved
+    normalized_user = _normalize_username(user)
+    requested_state = bool(payload.get("active", False))
+
+    if requested_state:
+        if bot_active and bot_operator and bot_operator != normalized_user:
+            raise HTTPException(403, "Bot is already controlled by another user.")
+        bot_active = True
+        bot_operator = normalized_user
+    else:
+        if bot_active and bot_operator and bot_operator != normalized_user:
+            raise HTTPException(403, "Only the active bot owner can stop the bot.")
+        bot_active = False
+        bot_operator = None
+        pending_trade = None
+        pending_approved = None
+        _approval_event.clear()
+
     _save_runtime_state("bot_active", "1" if bot_active else "0")
-    logger.info(f"Bot state changed to {bot_active} by {user}")
-    return {"status": "success", "bot_active": bot_active}
+    _save_runtime_state("bot_operator", bot_operator or "")
+    logger.info(f"Bot state changed to {bot_active} by {normalized_user}")
+    return {"status": "success", "bot_active": bot_active, "bot_operator": bot_operator}
 
 
 @app.post("/api/threshold")
@@ -1072,11 +1211,46 @@ async def update_threshold(payload: dict, user: str = Depends(get_current_user))
 
 
 @app.get("/api/history")
-async def get_history(user: str = Depends(get_current_user)):
+async def get_history(
+    date: str | None = None,
+    day: str | None = None,
+    status: str = "ALL",
+    pair: str | None = None,
+    limit: int = 500,
+    user: str = Depends(get_current_user),
+):
     global trade_history, total_profit
-    trade_history = db_core.get_trade_history(limit=100)
-    total_profit = db_core.get_total_profit()
-    return {"history": trade_history, "total_profit": total_profit}
+    history = db_core.get_trade_history(
+        limit=max(1, min(int(limit), 500)),
+        username=user,
+        trade_date=date,
+        day_of_week=day,
+        status_filter=status,
+        pair=pair,
+    )
+    total_profit = db_core.get_total_profit(username=user)
+    if not date and not day and (status or "ALL").upper() == "ALL" and not pair and int(limit) >= 500:
+        trade_history = history
+    return {
+        "history": history,
+        "total_profit": total_profit,
+        "pair_options": db_core.get_trade_pairs(username=user),
+        "summary": db_core.summarize_trade_history(
+            history,
+            {
+                "date": date or "",
+                "day": day or "ALL",
+                "status": status or "ALL",
+                "pair": pair or "ALL",
+            },
+        ),
+        "applied_filters": {
+            "date": date or "",
+            "day": day or "ALL",
+            "status": status or "ALL",
+            "pair": pair or "ALL",
+        },
+    }
 
 
 @app.get("/api/market-snapshot")
@@ -1282,9 +1456,45 @@ async def get_market_snapshot(user: str = Depends(get_current_user)):
     }
 
 
+@app.get("/api/public-prices")
+async def get_public_prices():
+    prices = {k: float(last_known_prices.get(k) or 0.0) for k in EXCHANGE_KEYS}
+    price_statuses = {
+        k: ("STALE" if prices[k] > 0 else "OFFLINE")
+        for k in EXCHANGE_KEYS
+    }
+
+    try:
+        price_snapshot = await trader.fetch_prices_with_status()
+    except Exception as e:
+        logger.warning(f"Public price refresh warning: {e}")
+        price_snapshot = {}
+
+    for ex in EXCHANGE_KEYS:
+        payload = price_snapshot.get(ex, {})
+        if payload.get("ok"):
+            px = float(payload.get("price") or 0.0)
+            if px > 0:
+                prices[ex] = px
+                price_statuses[ex] = "LIVE"
+                last_known_prices[ex] = px
+        elif last_known_prices[ex] is not None and float(last_known_prices[ex] or 0.0) > 0:
+            prices[ex] = float(last_known_prices[ex])
+            price_statuses[ex] = "STALE"
+
+    return {
+        "prices": {k: round(float(prices[k]), 2) for k in EXCHANGE_KEYS},
+        "price_statuses": price_statuses,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+
 @app.post("/api/trade/approve")
 async def approve_trade(payload: dict, user: str = Depends(get_current_user)):
     global pending_approved, _approval_event
+    normalized_user = _normalize_username(user)
+    if bot_operator and bot_operator != normalized_user:
+        raise HTTPException(403, "Only the active bot owner can approve trades.")
     pending_approved = payload.get("decision") == "APPROVE"
     _approval_event.set()
     return {"status": "success"}
@@ -1304,6 +1514,10 @@ async def market_analysis(user: str = Depends(get_current_user)):
 
 @app.post("/api/chat")
 async def chat(req: dict, user: str = Depends(get_current_user)):
+    query = str((req or {}).get("query") or (req or {}).get("message") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query is required")
+
     context = current_market_state if current_market_state else {
         "binance": last_known_prices.get("binance"),
         "bybit": last_known_prices.get("bybit"),
@@ -1311,7 +1525,7 @@ async def chat(req: dict, user: str = Depends(get_current_user)):
         "spread": None,
         "status": "CONTEXT_UNAVAILABLE",
     }
-    resp = await chatbot.process_chat_query(req["query"], context)
+    resp = await chatbot.process_chat_query(query, context)
     return {"response": resp, "provider": getattr(chatbot, "last_provider", "offline")}
 
 
@@ -1322,15 +1536,19 @@ async def market_ws(websocket: WebSocket, token: str = None):
         await websocket.close(1008)
         return
     try:
-        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = _normalize_username(payload.get("sub"))
+        if not username:
+            await websocket.close(1008)
+            return
         await websocket.accept()
-        active_connections.add(websocket)
+        active_connections[websocket] = username
         if current_market_state:
             await websocket.send_json(current_market_state)
         while True:
             await websocket.receive_text()
     except Exception:
-        active_connections.discard(websocket)
+        active_connections.pop(websocket, None)
         try:
             await websocket.close()
         except Exception:

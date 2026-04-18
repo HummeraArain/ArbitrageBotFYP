@@ -30,7 +30,13 @@ interface ChartSectionProps {
   threshold: number;
 }
 
-const formatTime = (value: number) => new Date(value).toLocaleTimeString();
+const timeFormatter = new Intl.DateTimeFormat([], {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
+const formatTime = (value: number) => timeFormatter.format(new Date(value));
 
 const ChartSection: React.FC<ChartSectionProps> = ({ spreadData, priceData, threshold }) => {
   const hasSpreadData = spreadData.length > 0;
@@ -53,18 +59,18 @@ const ChartSection: React.FC<ChartSectionProps> = ({ spreadData, priceData, thre
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={spreadData}>
+              <LineChart data={spreadData} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.03)" />
-                <XAxis dataKey="time" tickFormatter={formatTime} tick={{ fontSize: 10, fill: "#6b7280" }} />
+                <XAxis dataKey="time" tickFormatter={formatTime} minTickGap={32} tick={{ fontSize: 10, fill: "#6b7280" }} />
                 <YAxis domain={["auto", "auto"]} orientation="right" tick={{ fontSize: 10, fill: "#6b7280" }} />
                 <Tooltip
                   labelFormatter={(value) => formatTime(Number(value))}
                   formatter={(value: number, name: string) => [`${Number(value).toFixed(4)}%`, name]}
                 />
-                <Line type="monotone" dataKey="binance_bybit" name="BINANCE-BYBIT" stroke="#a855f7" strokeWidth={2} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="binance_coinbase" name="BINANCE-COINBASE" stroke="#22c55e" strokeWidth={2} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="bybit_coinbase" name="BYBIT-COINBASE" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="best" name="BEST SPREAD" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} strokeDasharray="5 5" />
+                <Line type="monotone" dataKey="binance_bybit" name="BINANCE-BYBIT" stroke="#a855f7" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                <Line type="monotone" dataKey="binance_coinbase" name="BINANCE-COINBASE" stroke="#22c55e" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                <Line type="monotone" dataKey="bybit_coinbase" name="BYBIT-COINBASE" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                <Line type="monotone" dataKey="best" name="BEST SPREAD" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} strokeDasharray="5 5" connectNulls />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -95,9 +101,9 @@ const ChartSection: React.FC<ChartSectionProps> = ({ spreadData, priceData, thre
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={priceData}>
+              <LineChart data={priceData} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.03)" />
-                <XAxis dataKey="time" tickFormatter={formatTime} tick={{ fontSize: 10, fill: "#6b7280" }} />
+                <XAxis dataKey="time" tickFormatter={formatTime} minTickGap={32} tick={{ fontSize: 10, fill: "#6b7280" }} />
                 <YAxis domain={["auto", "auto"]} orientation="right" tick={{ fontSize: 10, fill: "#6b7280" }} />
                 <Tooltip
                   labelFormatter={(value) => formatTime(Number(value))}
@@ -106,9 +112,9 @@ const ChartSection: React.FC<ChartSectionProps> = ({ spreadData, priceData, thre
                     name,
                   ]}
                 />
-                <Line type="monotone" dataKey="binance" name="BINANCE" stroke="#eab308" strokeWidth={2} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="bybit" name="BYBIT" stroke="#f97316" strokeWidth={2} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="coinbase" name="COINBASE" stroke="#06b6d4" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="binance" name="BINANCE" stroke="#eab308" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                <Line type="monotone" dataKey="bybit" name="BYBIT" stroke="#f97316" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
+                <Line type="monotone" dataKey="coinbase" name="COINBASE" stroke="#06b6d4" strokeWidth={2} dot={false} isAnimationActive={false} connectNulls />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -118,4 +124,4 @@ const ChartSection: React.FC<ChartSectionProps> = ({ spreadData, priceData, thre
   );
 };
 
-export default ChartSection;
+export default React.memo(ChartSection);

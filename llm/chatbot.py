@@ -3,6 +3,7 @@ import logging
 import asyncio
 import re
 import sqlite3
+from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -190,6 +191,48 @@ class ChatBot:
             pass
         return ""
 
+    def _extract_chat_completions_text(self, response: Any) -> str:
+        try:
+            choices = getattr(response, "choices", []) or []
+            if not choices:
+                return ""
+            message = getattr(choices[0], "message", None)
+            if not message:
+                return ""
+            content = getattr(message, "content", "")
+            return str(content or "").strip()
+        except Exception:
+            return ""
+
+    def _call_openai_chat(self, user_prompt: str) -> str:
+        if not self.client:
+            return ""
+
+        # Primary path for newer OpenAI SDKs.
+        if hasattr(self.client, "responses"):
+            response = self.client.responses.create(
+                model=self.model_id,
+                input=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_output_tokens=350,
+            )
+            return self._extract_openai_text(response)
+
+        # Compatibility path for older SDKs.
+        completion = self.client.chat.completions.create(
+            model=self.model_id,
+            messages=[
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=350,
+        )
+        return self._extract_chat_completions_text(completion)
+
     async def process_chat_query(self, user_query: str, market_context: dict = None) -> str:
         is_greeting = self._is_greeting_query(user_query)
         is_trade_history = self._is_trade_history_query(user_query)
@@ -228,18 +271,9 @@ class ChatBot:
         user_prompt = f"{context_str}{extra_context}{format_instruction}\n\nUser Question: {user_query}"
         if self.client:
             try:
-                response = await asyncio.to_thread(
-                    self.client.responses.create,
-                    model=self.model_id,
-                    input=[
-                        {"role": "system", "content": self.system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.2,
-                    max_output_tokens=350,
-                )
+                response_text = await asyncio.to_thread(self._call_openai_chat, user_prompt)
                 self.last_provider = "openai"
-                return self._sanitize_response(self._extract_openai_text(response))
+                return self._sanitize_response(response_text)
             except Exception as e:
                 logger.error(f"ChatBot OpenAI Error: {str(e)}")
 

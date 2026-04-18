@@ -177,15 +177,44 @@ const Index = () => {
     return () => socket.close();
   }, [toast, handleLogout]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim()) return;
-    setMessages(prev => [...prev, { role: 'user', text: input }]);
+    const userMsg = input.trim();
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setInput("");
-    setTimeout(() => {
-      if (messages.length < 5) {
-        setMessages(prev => [...prev, { role: 'ai', text: "Analyzing query against market depth... spread convergence detected at Binance node." }]);
+
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(apiUrl("/api/chat"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query: userMsg }),
+      });
+
+      if (res.status === 401) {
+        handleLogout();
+        return;
       }
-    }, 1000);
+
+      if (!res.ok) {
+        throw new Error(`Chat request failed with status ${res.status}`);
+      }
+
+      const data: { response?: string } = await res.json();
+      setMessages(prev => [
+        ...prev,
+        { role: "ai", text: data.response || "I could not generate a response right now. Please try again." },
+      ]);
+    } catch (err) {
+      console.error("Chat Error:", err);
+      setMessages(prev => [
+        ...prev,
+        { role: "ai", text: "AI chat is temporarily unavailable. Please try again in a moment." },
+      ]);
+    }
   };
 
   useEffect(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), [messages]);
